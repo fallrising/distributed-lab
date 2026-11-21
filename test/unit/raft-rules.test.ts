@@ -51,6 +51,7 @@ test('D5 rule 2: duplicated or reordered older AppendEntries never truncate matc
   const b = node('B', 25);
   b.handle('A', ae({ entries: [entry(1, 'r1'), entry(1, 'r2')] }), 9);
   b.handle('A', ae({ entries: [entry(1, 'r1')] }), 10); // older, delayed copy
+  assert.deepEqual(b.stable.log.map((e) => e.command.requestId), ['r1', 'r2'], 'not truncated by the older copy');
   b.handle('A', ae({ entries: [entry(1, 'r1'), entry(1, 'r2')] }), 10); // duplicate
   assert.deepEqual(b.stable.log.map((e) => e.command.requestId), ['r1', 'r2']);
   // A real term conflict does truncate.
@@ -180,4 +181,18 @@ test('D6: reads are log entries; an isolated leader never answers a read from lo
   const outs = [...a.tick(6), ...a.tick(7), ...a.tick(30)];
   assert.deepEqual(only(outs, 'ClientReply'), [], 'no reply without a majority');
   assert.equal(a.volatile?.commitIndex, 0);
+});
+
+test('D7: a different intent under the same identity is not deduplicated away; it is answered as a conflict', () => {
+  const a = leaderA();
+  const red = entry(1, 'same-id', '紅').command;
+  a.handle('writer', { type: 'ClientRequest', command: red }, 6);
+  // Same identity, different intent, while the original is still uncommitted (gateway and leader both hold it).
+  a.handle('writer', { type: 'ClientRequest', command: { ...red, value: '藍' } }, 6);
+  a.handle('C', { type: 'Forward', command: { ...red, value: '藍' } }, 6);
+  assert.deepEqual(a.stable.log.map((e) => e.command.value), ['紅', '藍'], 'conflicting intent is appended once, not dropped');
+  a.handle('B', { type: 'AppendEntriesReply', term: 1, success: true, matchIndex: 2, prevLogIndex: 0 }, 7);
+  const replies = only(a.handle('C', { type: 'AppendEntriesReply', term: 1, success: true, matchIndex: 2, prevLogIndex: 0 }, 7), 'ClientReply');
+  assert.deepEqual(replies.map((r) => r.result), ['已確認', '請求識別衝突']);
+  assert.equal(a.volatile?.kv.get('x'), '紅');
 });

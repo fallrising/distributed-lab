@@ -210,3 +210,39 @@ function crosses(exp: Experiment, id: string): boolean {
   const side = (n: string) => (['A', 'B'].includes(n) ? 0 : ['C', 'D', 'E'].includes(n) ? 1 : -1);
   return side(m.from) !== -1 && side(m.to) !== -1 && side(m.from) !== side(m.to);
 }
+
+test('AC-EXP-01 崩潰重啟保留非空穩定資料；崩潰前已送出的訊息照常交付；恢復連線恢復客戶端可達性', () => {
+  const data = scenarios();
+  const exp = faultTraceExperiment(data, { eventsThroughTick: 0, deliveryMode: 'auto' });
+  // A campaigns at 4; B receives the RequestVote at 5, persists its vote and replies.
+  exp.advanceTo(5);
+  const stableB = exp.nodeStable('B');
+  assert.deepEqual({ term: stableB.currentTerm, votedFor: stableB.votedFor }, { term: 1, votedFor: 'A' }, 'B has non-empty stable state');
+  const inFlight = exp.pending().filter((m) => m.from === 'B');
+  assert.ok(inFlight.length > 0, 'B has messages in flight when it crashes');
+  exp.schedule({ tick: 6, type: 'crash', node: 'B' });
+  exp.schedule({ tick: 7, type: 'restart', node: 'B' });
+  exp.advanceTo(6);
+  assert.equal(exp.nodeStatus('B').alive, false);
+  assert.equal(canonicalJson(exp.nodeStable('B')), canonicalJson(stableB), 'crash keeps stable storage');
+  // Messages sent by B before the crash are still delivered (only messages to B are dropped).
+  for (const m of inFlight) {
+    const fate = exp.log().filter((e) => e.kind === 'effect' && e.target === m.id).map((e) => e.action);
+    assert.deepEqual(fate, ['deliver'], `${m.id} ${m.from}->${m.to} delivered after B crashed`);
+  }
+  exp.advanceTo(7);
+  const s = exp.nodeStatus('B');
+  assert.deepEqual({ alive: s.alive, role: s.role, commitIndex: s.commitIndex, lastApplied: s.lastApplied }, { alive: true, role: 'follower', commitIndex: 0, lastApplied: 0 });
+  assert.equal(canonicalJson(exp.nodeStable('B')), canonicalJson(stableB), 'restart rebuilds from the same stable storage');
+  // Partition with clients reaching only A: a request via B is dropped at send; after heal it reaches B.
+  exp.schedule({ tick: 8, type: 'partition', groups: [['A', 'B'], ['C', 'D', 'E']], clientReachable: ['A'] });
+  exp.schedule({ tick: 8, type: 'invoke', client: 'reader', requestId: 'via-b-cut', action: 'read', key: 'x', via: 'B' });
+  exp.schedule({ tick: 9, type: 'heal' });
+  exp.schedule({ tick: 10, type: 'invoke', client: 'writer', requestId: 'via-b-healed', action: 'read', key: 'x', via: 'B' });
+  exp.advanceTo(11);
+  const send = (ref: string) => exp.log().find((e) => e.action === 'client-send' && e.requestRef === ref)!;
+  assert.equal(send('reader/via-b-cut').outcome, '送出即丟棄');
+  const healed = send('writer/via-b-healed');
+  assert.equal(healed.outcome, '送往 B');
+  assert.ok(exp.log().some((e) => e.kind === 'effect' && e.action === 'deliver' && e.target === healed.target), 'reaches B after heal');
+});

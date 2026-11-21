@@ -5,6 +5,8 @@ import type { Entry, Outgoing, Payload } from './messages.ts';
 
 export type Role = 'follower' | 'candidate' | 'leader';
 
+const gatewayKey = (c: Command) => `${requestKey(c.clientId, c.requestId)}#${intentOf(c)}`;
+
 export interface StableStorage {
   currentTerm: number;
   votedFor: string | null;
@@ -351,7 +353,7 @@ export class RaftNode {
         v.applied.set(key, { intent, result });
       }
       const reply: Outgoing = { to: c.clientId, payload: { type: 'ClientReply', clientId: c.clientId, requestId: c.requestId, result } };
-      const isGateway = v.gateway.delete(key);
+      const isGateway = v.gateway.delete(gatewayKey(c));
       // Leader replies directly; the gateway also replies as a backup (same reply once if both).
       if (v.role === 'leader' || isGateway) out.push(reply);
     }
@@ -360,7 +362,8 @@ export class RaftNode {
 
   private onClientRequest(command: Command, now: number): Outgoing[] {
     const v = this.alive();
-    const key = requestKey(command.clientId, command.requestId);
+    // Keyed by identity and intent: a different intent under the same identity is its own request (ADR D7).
+    const key = gatewayKey(command);
     let g = v.gateway.get(key);
     if (g === undefined) {
       g = { command, nextResendAt: now };
@@ -394,13 +397,12 @@ export class RaftNode {
     return out;
   }
 
-  /** Leader-side dedup only for an uncommitted entry of the current term (ADR D7). */
+  /** Leader-side dedup only for an uncommitted entry of the current term with the same identity and intent (ADR D7). */
   private propose(command: Command): void {
     const v = this.alive();
     const term = this.stable.currentTerm;
-    const dup = this.stable.log.some(
-      (e, i) => i + 1 > v.commitIndex && e.term === term && e.command.clientId === command.clientId && e.command.requestId === command.requestId,
-    );
+    const key = gatewayKey(command);
+    const dup = this.stable.log.some((e, i) => i + 1 > v.commitIndex && e.term === term && gatewayKey(e.command) === key);
     if (dup) return;
     // Rule 1: the leader writes its own log before replicating (heartbeat carries it).
     this.stable.log.push({ term, command });

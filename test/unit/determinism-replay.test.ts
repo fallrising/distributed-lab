@@ -60,3 +60,28 @@ test('D9: keys are judged independently and any illegal key makes the history il
   assert.equal(pv.type, '合法');
   if (pv.type === '合法') assert.deepEqual(pv.witness[0]?.includedPending, []);
 });
+
+test('D9: memoisation keys include the current value (regression)', () => {
+  // w1=a and w2=b overlap; the read after both returns a, so w2 must be ordered before w1.
+  const ops = [
+    { id: 'w1', action: 'write' as const, key: 'x', value: 'a', invoke: 1, complete: 5, result: '已確認' },
+    { id: 'w2', action: 'write' as const, key: 'x', value: 'b', invoke: 2, complete: 5, result: '已確認' },
+    { id: 'r', action: 'read' as const, key: 'x', invoke: 6, complete: 7, result: 'a' },
+  ];
+  const v = checkHistory(ops, {}, { maxStates: 1000 });
+  assert.equal(v.type, '合法');
+  if (v.type === '合法') assert.deepEqual(v.witness[0]?.order, ['w2', 'w1', 'r']);
+});
+
+test('D9: budgets are per key, so an illegal key is still found after another key runs out', () => {
+  const big = Array.from({ length: 8 }, (_, i) => ({ id: `w${i}`, action: 'write' as const, key: 'a', value: `v${i}`, invoke: 1, complete: 10, result: '已確認' }));
+  const ops = [
+    ...big,
+    { id: 'ra', action: 'read' as const, key: 'a', invoke: 11, complete: 12, result: 'none-of-them' },
+    { id: 'wz', action: 'write' as const, key: 'z', value: '紅', invoke: 1, complete: 2, result: '已確認' },
+    { id: 'rz', action: 'read' as const, key: 'z', invoke: 3, complete: 4, result: '不存在' },
+  ];
+  assert.equal(checkHistory(ops, {}, { maxStates: 50 }).type, '非法');
+  assert.equal(checkHistory(ops.filter((o) => o.key === 'a'), {}, { maxStates: 50 }).type, '未判定');
+  assert.throws(() => checkHistory(ops, {}, { timeBudgetMs: 10 }), /clock/);
+});

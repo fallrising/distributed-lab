@@ -18,7 +18,7 @@ export interface CheckOp {
 }
 
 export interface Budget {
-  /** Resource budget: maximum explored states (summed over keys). */
+  /** Resource budget: maximum explored states per key (keys are judged independently). */
   readonly maxStates?: number;
   /** Time budget in ms, measured with the injected clock. */
   readonly timeBudgetMs?: number;
@@ -88,13 +88,9 @@ const precedes = (a: CheckOp, b: CheckOp) => a.complete !== null && a.complete <
 
 /** Checks one history. Keys are independent for single-key reads and writes. */
 export function checkHistory(ops: readonly CheckOp[], initialValues: Readonly<Record<string, string>>, budget: Budget = {}): Verdict {
+  if (budget.timeBudgetMs !== undefined && budget.clock === undefined) throw new Error('a time budget needs an injected clock (src/checker/clock.ts)');
   const clock = budget.clock ?? null;
-  const meter: Meter = {
-    states: 0,
-    maxStates: budget.maxStates ?? Number.POSITIVE_INFINITY,
-    clock,
-    deadline: budget.timeBudgetMs !== undefined && clock !== null ? clock.now() + budget.timeBudgetMs : null,
-  };
+  const deadline = budget.timeBudgetMs !== undefined && clock !== null ? clock.now() + budget.timeBudgetMs : null;
   const keys = [...new Set(ops.map((o) => o.key))].sort();
   const witness: KeyWitness[] = [];
   let undetermined: UndeterminedCause | null = null;
@@ -103,15 +99,15 @@ export function checkHistory(ops: readonly CheckOp[], initialValues: Readonly<Re
       .filter((o) => o.key === key)
       .filter((o) => !(o.action === 'read' && o.complete === null)) // pending reads have no effect
       .filter((o) => o.result !== CONFLICT); // rejected identity reuse has no effect
+    // Each key gets its own state budget; the time deadline is shared.
+    const meter: Meter = { states: 0, maxStates: budget.maxStates ?? Number.POSITIVE_INFINITY, clock, deadline };
     try {
       const r = checkKey(key, keyOps, initialValues[key], meter);
       if (r.type === '非法') return r; // any illegal key makes the whole history illegal
       witness.push(r.witness);
     } catch (e) {
       if (!(e instanceof BudgetExhausted)) throw e;
-      undetermined ??= e.budgetCause;
-      // Keep checking other keys only for a definite 非法; budgets are shared, so stop here.
-      break;
+      undetermined ??= e.budgetCause; // keep checking the other keys: a definite 非法 still wins
     }
   }
   if (undetermined !== null) return { type: '未判定', cause: undetermined };
