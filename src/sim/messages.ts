@@ -20,7 +20,7 @@ export type Payload =
   | { readonly type: 'AppendEntriesReply'; readonly term: number; readonly success: boolean; readonly matchIndex: number; readonly prevLogIndex: number }
   | { readonly type: 'ClientRequest'; readonly command: Command }
   | { readonly type: 'Forward'; readonly command: Command }
-  | { readonly type: 'ClientReply'; readonly clientId: string; readonly requestId: string; readonly result: string }
+  | { readonly type: 'ClientReply'; readonly clientId: string; readonly requestId: string; readonly intent: string; readonly result: string }
   | { readonly type: 'Diagnostic'; readonly label: string };
 
 export interface Outgoing {

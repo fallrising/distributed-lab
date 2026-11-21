@@ -26,6 +26,8 @@ export interface VolatileState {
   kv: Map<string, string>;
   /** Request-identity dedup table of the state machine: key -> {intent, result}. */
   applied: Map<string, { intent: string; result: string }>;
+  /** Request keys in the order their (first and only) effect was applied by this state machine. */
+  effects: string[];
   votes: Set<string>;
   nextIndex: Map<string, number>;
   matchIndex: Map<string, number>;
@@ -84,6 +86,7 @@ export class RaftNode {
       lastApplied: 0,
       kv: new Map(Object.entries(this.params.initialValues)),
       applied: new Map(),
+      effects: [],
       votes: new Set(),
       nextIndex: new Map(),
       matchIndex: new Map(),
@@ -351,8 +354,9 @@ export class RaftNode {
           result = CONFIRMED;
         } else result = v.kv.get(c.key) ?? ABSENT;
         v.applied.set(key, { intent, result });
+        v.effects.push(key);
       }
-      const reply: Outgoing = { to: c.clientId, payload: { type: 'ClientReply', clientId: c.clientId, requestId: c.requestId, result } };
+      const reply: Outgoing = { to: c.clientId, payload: { type: 'ClientReply', clientId: c.clientId, requestId: c.requestId, intent, result } };
       const isGateway = v.gateway.delete(gatewayKey(c));
       // Leader replies directly; the gateway also replies as a backup (same reply once if both).
       if (v.role === 'leader' || isGateway) out.push(reply);

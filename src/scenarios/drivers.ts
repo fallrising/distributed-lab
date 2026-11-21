@@ -5,7 +5,10 @@ import { canonicalJson } from '../canonical.ts';
 import { branchExperiment, newExperiment, type Experiment, type ExperimentConfig, type Observation, type ScriptEvent } from '../sim/experiment.ts';
 import type { NodeStatus, StableStorage } from '../sim/node.ts';
 import type { Action } from '../types.ts';
-import type { Scenarios, StepSpec } from './data.ts';
+import type { RetryStep, Scenarios, StepSpec } from './data.ts';
+import { SplitMix64 } from '../rng.ts';
+import { MISSING_MAJORITY, type LivenessWindow } from './liveness.ts';
+import { intentOf } from '../types.ts';
 
 /** ADR-0001 D5: fixed, distinct election timeouts; heartbeat 1; gateway resend 4. ADR D7: attempt timeout 20. */
 export const ELECTION_TIMEOUTS: Readonly<Record<string, number>> = { A: 4, C: 7, D: 14, E: 19, B: 25 };
@@ -255,3 +258,205 @@ export function faultTraceExperiment(data: Scenarios, opts: FaultTraceOptions = 
   }
   return exp;
 }
+
+// ---------------------------------------------------------------- retry_cases (ADR-0002 E1, E2)
+
+/** retry_cases do not state a delivery bound; they use the baseline's stable bound. */
+function retryConfig(data: Scenarios, overrides: Partial<ExperimentConfig> = {}): ExperimentConfig {
+  return clusterConfig(data, { deliveryBound: data.baseline_case.delivery_bound_ticks, ...overrides });
+}
+
+function stepEvent(step: RetryStep, tick: number, via: string): ScriptEvent {
+  return {
+    tick,
+    type: 'invoke',
+    client: step.client,
+    requestId: step.request,
+    action: step.action as Action,
+    key: step.key,
+    ...(step.value !== undefined ? { value: step.value } : {}),
+    via,
+  };
+}
+
+/** Whether the latest send of `step` has its answer: a new op completed, a retry got a reply, a conflict got a result. */
+function answered(exp: Experiment, step: RetryStep): boolean {
+  const op = exp.history().find((o) => o.client === step.client && o.requestId === step.request);
+  if (op === undefined) return false;
+  const intent = intentOf({ clientId: step.client, requestId: step.request, action: step.action as Action, key: step.key, ...(step.value !== undefined ? { value: step.value } : {}) });
+  if (intent !== op.intent) return op.conflicts.filter((c) => c.intent === intent).every((c) => c.result !== undefined);
+  return op.attempts.at(-1)?.result === 'reply';
+}
+
+/** Runs steps one after another: each is sent the tick after the previous one was answered (sequential cases). */
+function runSequential(exp: Experiment, steps: readonly RetryStep[], bound: number): void {
+  for (const step of steps) {
+    const tick = exp.now + 1;
+    exp.schedule(stepEvent(step, tick, firstReachable(exp)));
+    exp.advance(1);
+    while (!answered(exp, step) && exp.now - tick <= bound) exp.advance(1);
+    if (!answered(exp, step)) return; // the test reports the miss
+  }
+}
+
+/** Advance until every live member has applied the same prefix, then report those members. */
+function settle(exp: Experiment, ticks = 10): string[] {
+  exp.advance(ticks);
+  const alive = exp.nodeStatuses().filter((n) => n.alive);
+  const top = Math.max(...alive.map((n) => n.lastApplied));
+  return alive.filter((n) => n.lastApplied === top).map((n) => n.node);
+}
+
+export interface RetryRun {
+  readonly experiment: Experiment;
+  /** Members whose state machines applied the whole committed log when the run ended. */
+  readonly settledMembers: string[];
+}
+
+const RETRY_STEP_BOUND = 40;
+
+export function runRetryCase(data: Scenarios, name: 'completed_write' | 'completed_read', strategy: Strategy): RetryRun {
+  const exp = newExperiment(retryConfig(data), strategy);
+  runSequential(exp, data.retry_cases[name].steps, RETRY_STEP_BOUND);
+  return { experiment: exp, settledMembers: settle(exp) };
+}
+
+export function runConflictingIntent(data: Scenarios, strategy: Strategy): RetryRun {
+  const c = data.retry_cases.conflicting_intent;
+  const exp = newExperiment(retryConfig(data), strategy);
+  runSequential(exp, [c.original, ...c.conflicting_attempts], RETRY_STEP_BOUND);
+  return { experiment: exp, settledMembers: settle(exp) };
+}
+
+/**
+ * pending_retry: every success reply of the original attempt is dropped before delivery (ADR-0002 E2): at the
+ * end of each tick, pending replies of the request are dropped at the next tick's step 1, which precedes
+ * delivery. Dropping stops once the client resends the same request after its attempt timed out.
+ */
+export function runPendingRetry(data: Scenarios, strategy: Strategy): RetryRun {
+  const c = data.retry_cases.pending_retry;
+  const exp = newExperiment(retryConfig(data, { retryIfUnavailable: true }), strategy);
+  exp.schedule(stepEvent(c.original, 1, firstReachable(exp)));
+  const intent = intentOf({ clientId: c.original.client, requestId: c.original.request, action: c.original.action as Action, key: c.original.key, ...(c.original.value !== undefined ? { value: c.original.value } : {}) });
+  const dropped = new Set<string>();
+  const op = () => exp.history().find((o) => o.requestId === c.original.request);
+  const deadline = 1 + CLIENT_ATTEMPT_TIMEOUT + RETRY_STEP_BOUND;
+  while (exp.now < deadline && op()?.outcome.status !== '已完成') {
+    exp.advance(1);
+    if ((op()?.attempts.length ?? 0) > 1) continue; // the retry is out: stop the fault
+    for (const m of exp.pending()) {
+      const p = m.payload;
+      if (p.type === 'ClientReply' && m.to === c.original.client && p.requestId === c.original.request && p.intent === intent && !dropped.has(m.id)) {
+        exp.schedule({ tick: exp.now + 1, type: 'drop', message: m.id });
+        dropped.add(m.id);
+      }
+    }
+  }
+  return { experiment: exp, settledMembers: settle(exp) };
+}
+
+// ---------------------------------------------------------------- liveness_case, no_liveness_case (ADR-0002 E3)
+
+export const LIVENESS_TARGETED_PREFIXES = ['minority-leader-write', 'leader-d-at-window', 'split-then-regroup'] as const;
+export type LivenessPrefix = 'random' | (typeof LIVENESS_TARGETED_PREFIXES)[number];
+
+export interface LivenessOptions {
+  readonly prefix: LivenessPrefix;
+  /** Seed of the random prefix (only for prefix 'random'). */
+  readonly prefixSeed?: number;
+  /** Delivery bound for messages sent during the fault prefix; the window always uses the data's bound. */
+  readonly prefixBound?: number;
+  readonly strategy: Strategy;
+}
+
+function prefixEvents(members: readonly string[], opts: LivenessOptions, through: number): ScriptEvent[] {
+  const all = [...members];
+  const cut = (tick: number, a: string[]): ScriptEvent => ({ tick, type: 'partition', groups: [a, all.filter((m) => !a.includes(m))], clientReachable: all });
+  switch (opts.prefix) {
+    case 'minority-leader-write':
+      // A leads before the cut; the write reaches only A's minority side; C's side elects a newer leader.
+      return [cut(9, ['A', 'B'])];
+    case 'leader-d-at-window':
+      // Only B, D, E can elect: D (timeout 14) leads when the window starts and then crashes with E.
+      return [cut(1, ['A', 'C'])];
+    case 'split-then-regroup':
+      return [cut(1, ['A']), cut(12, ['A', 'C'])];
+    case 'random': {
+      const rng = new SplitMix64((opts.prefixSeed ?? 0) * 7919 + 1);
+      const count = 2 + rng.nextInt(3);
+      const ticks = new Set<number>();
+      while (ticks.size < count) ticks.add(1 + rng.nextInt(through));
+      return [...ticks]
+        .sort((a, b) => a - b)
+        .map((tick) => {
+          if (rng.nextInt(3) === 0) return { tick, type: 'heal', clientReachable: all } as ScriptEvent;
+          const mask = 1 + rng.nextInt((1 << all.length) - 2);
+          return cut(tick, all.filter((_, i) => (mask & (1 << i)) !== 0));
+        });
+    }
+  }
+}
+
+export function runLiveness(data: Scenarios, opts: LivenessOptions): { readonly experiment: Experiment } {
+  const c = data.liveness_case;
+  const w = c.stable_window;
+  const exp = newExperiment(
+    clusterConfig(data, {
+      deliveryBound: w.delivery_bound_ticks,
+      deliveryBounds: [
+        { fromTick: c.fault_prefix.start_tick, bound: opts.prefixBound ?? w.delivery_bound_ticks },
+        { fromTick: w.starts_at_tick, bound: w.delivery_bound_ticks },
+      ],
+      retryIfUnavailable: c.retry_original_if_unavailable,
+    }),
+    opts.strategy,
+  );
+  for (const ev of prefixEvents(data.cluster.members, opts, c.fault_prefix.through_tick)) exp.schedule(ev);
+  exp.schedule(stepEvent(c.fault_prefix.pending_write, c.fault_prefix.pending_write.invoke, w.client_reachable_members[0] as string));
+  exp.schedule({ tick: w.starts_at_tick, type: 'heal', clientReachable: w.client_reachable_members });
+  for (const n of w.other_members) exp.schedule({ tick: w.starts_at_tick, type: 'crash', node: n });
+  exp.schedule(stepEvent(w.fresh_read, w.fresh_read.invoke, w.client_reachable_members[0] as string));
+  exp.advanceTo(w.ends_at_tick);
+  return { experiment: exp };
+}
+
+export function livenessWindow(data: Scenarios): LivenessWindow {
+  const c = data.liveness_case;
+  const w = c.stable_window;
+  return {
+    from: w.starts_at_tick,
+    to: w.ends_at_tick,
+    alive: w.alive_members,
+    clientReachable: w.client_reachable_members,
+    deliveryBound: w.delivery_bound_ticks,
+    deadlines: [
+      { client: c.fault_prefix.pending_write.client, request: c.fault_prefix.pending_write.request, by: w.pending_write_complete_by_tick },
+      { client: w.fresh_read.client, request: w.fresh_read.request, by: w.fresh_read.complete_by },
+    ],
+  };
+}
+
+/** no_liveness_case: C, D, E crash at tick 1, clients reach only A; the write is sent via A at tick 2. */
+export function runNoLiveness(data: Scenarios, strategy: Strategy): { readonly experiment: Experiment } {
+  const c = data.no_liveness_case;
+  const exp = newExperiment(clusterConfig(data), strategy);
+  for (const n of c.crashed_members) exp.schedule({ tick: 1, type: 'crash', node: n });
+  exp.schedule({ tick: 1, type: 'client-reach', members: c.client_reachable_members });
+  exp.schedule(stepEvent(c.new_write, 2, c.client_reachable_members[0] as string));
+  exp.advanceTo(c.observation_end_tick);
+  return { experiment: exp };
+}
+
+export function noLivenessWindow(data: Scenarios): LivenessWindow {
+  const c = data.no_liveness_case;
+  return {
+    from: 1,
+    to: c.observation_end_tick,
+    alive: c.alive_members,
+    clientReachable: c.client_reachable_members,
+    deliveryBound: data.cluster.default_delivery_delay_ticks,
+    deadlines: [{ client: c.new_write.client, request: c.new_write.request, by: c.observation_end_tick }],
+  };
+}
+
+export { MISSING_MAJORITY };
