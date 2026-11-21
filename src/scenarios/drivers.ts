@@ -343,10 +343,11 @@ export function runPendingRetry(data: Scenarios, strategy: Strategy): RetryRun {
   const deadline = 1 + CLIENT_ATTEMPT_TIMEOUT + RETRY_STEP_BOUND;
   while (exp.now < deadline && op()?.outcome.status !== '已完成') {
     exp.advance(1);
-    if ((op()?.attempts.length ?? 0) > 1) continue; // the retry is out: stop the fault
+    // The fault covers replies sent before the retry tick; replies sent at or after it are delivered.
+    const retryAt = op()?.attempts[1]?.sentAt ?? Number.POSITIVE_INFINITY;
     for (const m of exp.pending()) {
       const p = m.payload;
-      if (p.type === 'ClientReply' && m.to === c.original.client && p.requestId === c.original.request && p.intent === intent && !dropped.has(m.id)) {
+      if (p.type === 'ClientReply' && m.sentAt < retryAt && m.to === c.original.client && p.requestId === c.original.request && p.intent === intent && !dropped.has(m.id)) {
         exp.schedule({ tick: exp.now + 1, type: 'drop', message: m.id });
         dropped.add(m.id);
       }
@@ -357,7 +358,14 @@ export function runPendingRetry(data: Scenarios, strategy: Strategy): RetryRun {
 
 // ---------------------------------------------------------------- liveness_case, no_liveness_case (ADR-0002 E3)
 
-export const LIVENESS_TARGETED_PREFIXES = ['minority-leader-write', 'leader-d-at-window', 'split-then-regroup'] as const;
+export const LIVENESS_TARGETED_PREFIXES = [
+  'minority-leader-write',
+  'leader-d-at-window',
+  'split-then-regroup',
+  // ADR-0002 review counterexamples: A (shortest timeout) holds an uncommitted entry of an older term.
+  'stale-a-older-term',
+  'stale-a-five-events',
+] as const;
 export type LivenessPrefix = 'random' | (typeof LIVENESS_TARGETED_PREFIXES)[number];
 
 export interface LivenessOptions {
@@ -367,11 +375,15 @@ export interface LivenessOptions {
   /** Delivery bound for messages sent during the fault prefix; the window always uses the data's bound. */
   readonly prefixBound?: number;
   readonly strategy: Strategy;
+  /** Gateway of the fresh read; the data leaves it open (default: the first client-reachable member). */
+  readonly readVia?: string;
 }
 
 function prefixEvents(members: readonly string[], opts: LivenessOptions, through: number): ScriptEvent[] {
   const all = [...members];
   const cut = (tick: number, a: string[]): ScriptEvent => ({ tick, type: 'partition', groups: [a, all.filter((m) => !a.includes(m))], clientReachable: all });
+  const part = (tick: number, groups: string[][]): ScriptEvent => ({ tick, type: 'partition', groups, clientReachable: all });
+  const heal = (tick: number): ScriptEvent => ({ tick, type: 'heal', clientReachable: all });
   switch (opts.prefix) {
     case 'minority-leader-write':
       // A leads before the cut; the write reaches only A's minority side; C's side elects a newer leader.
@@ -381,6 +393,10 @@ function prefixEvents(members: readonly string[], opts: LivenessOptions, through
       return [cut(1, ['A', 'C'])];
     case 'split-then-regroup':
       return [cut(1, ['A']), cut(12, ['A', 'C'])];
+    case 'stale-a-older-term':
+      return [part(9, [['C', 'D'], ['A', 'E'], ['B']]), heal(12), cut(19, ['A', 'B'])];
+    case 'stale-a-five-events':
+      return [cut(1, ['A', 'B', 'C', 'E']), heal(6), part(9, [['C', 'D'], ['A', 'E'], ['B']]), heal(12), cut(19, ['A', 'B'])];
     case 'random': {
       const rng = new SplitMix64((opts.prefixSeed ?? 0) * 7919 + 1);
       const count = 2 + rng.nextInt(3);
@@ -415,7 +431,7 @@ export function runLiveness(data: Scenarios, opts: LivenessOptions): { readonly 
   exp.schedule(stepEvent(c.fault_prefix.pending_write, c.fault_prefix.pending_write.invoke, w.client_reachable_members[0] as string));
   exp.schedule({ tick: w.starts_at_tick, type: 'heal', clientReachable: w.client_reachable_members });
   for (const n of w.other_members) exp.schedule({ tick: w.starts_at_tick, type: 'crash', node: n });
-  exp.schedule(stepEvent(w.fresh_read, w.fresh_read.invoke, w.client_reachable_members[0] as string));
+  exp.schedule(stepEvent(w.fresh_read, w.fresh_read.invoke, opts.readVia ?? (w.client_reachable_members[0] as string)));
   exp.advanceTo(w.ends_at_tick);
   return { experiment: exp };
 }

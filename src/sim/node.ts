@@ -41,6 +41,8 @@ export interface NodeParams {
   readonly electionTimeout: number;
   readonly heartbeatInterval: number;
   readonly gatewayResendInterval: number;
+  /** ADR-0002 E3: a candidate refused for a stale log waits this long before campaigning again. */
+  readonly staleCandidateBackoff: number;
   readonly initialValues: Readonly<Record<string, string>>;
 }
 
@@ -242,22 +244,31 @@ export class RaftNode {
     const v = this.alive();
     this.observeTerm(p.term, now);
     let granted = false;
+    const upToDate = p.lastLogTerm > this.lastLogTerm() || (p.lastLogTerm === this.lastLogTerm() && p.lastLogIndex >= this.lastLogIndex());
     if (p.term === this.stable.currentTerm) {
-      const upToDate = p.lastLogTerm > this.lastLogTerm() || (p.lastLogTerm === this.lastLogTerm() && p.lastLogIndex >= this.lastLogIndex());
       if ((this.stable.votedFor === null || this.stable.votedFor === p.candidateId) && upToDate) {
         this.stable.votedFor = p.candidateId; // Rule 1: persisted before the reply is produced.
         v.electionResetAt = now; // Rule 8: granting a vote.
         granted = true;
       }
     }
-    return [{ to: from, payload: { type: 'RequestVoteReply', term: this.stable.currentTerm, voteGranted: granted } }];
+    return [{ to: from, payload: { type: 'RequestVoteReply', term: this.stable.currentTerm, voteGranted: granted, logOk: upToDate } }];
   }
 
   private onRequestVoteReply(from: string, p: Extract<Payload, { type: 'RequestVoteReply' }>, now: number): Outgoing[] {
     const v = this.alive();
     this.observeTerm(p.term, now);
     // Rule 5: replies of another term are ignored.
-    if (v.role !== 'candidate' || p.term !== this.stable.currentTerm || !p.voteGranted) return [];
+    if (v.role !== 'candidate' || p.term !== this.stable.currentTerm) return [];
+    if (!p.voteGranted) {
+      // ADR-0002 E3: refused for a stale log. Step down and back off so a node with a newer log can win
+      // instead of being knocked back by our ever-higher terms (the liveness_case livelock).
+      if (!p.logOk) {
+        v.role = 'follower';
+        v.electionResetAt = now + this.params.staleCandidateBackoff;
+      }
+      return [];
+    }
     v.votes.add(from);
     return v.votes.size >= this.majority ? this.becomeLeader(now) : [];
   }

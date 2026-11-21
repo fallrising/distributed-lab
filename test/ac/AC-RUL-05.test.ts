@@ -15,7 +15,8 @@ const expectedOf = (e: string | undefined) => (e === '原操作的已確認結�
 
 function violations(data: Scenarios, name: 'completed_write' | 'completed_read', s: Strategy): string[] {
   const c = data.retry_cases[name];
-  const exp = runRetryCase(data, name, s).experiment;
+  const run = runRetryCase(data, name, s);
+  const exp = run.experiment;
   const ops = exp.history();
   const out: string[] = [];
   const firstIndex = new Map<string, number>();
@@ -40,6 +41,20 @@ function violations(data: Scenarios, name: 'completed_write' | 'completed_read',
       if (prev?.outcome.status !== '已完成' || retry.sentAt <= prev.outcome.complete) out.push(`${st.request}: retry not sent after the newer step completed`);
     } else if (op.outcome.result !== st.expected) out.push(`${st.request}: ${op.outcome.result}, expected ${st.expected}`);
   }
+  // The retry really reached the cluster (not a late duplicate reply): it added a new log entry that the
+  // state machine answered from its dedup table, so the request's effect was applied exactly once.
+  for (const st of c.steps.filter((x) => x.is_retry)) {
+    const ref = `${st.client}/${st.request}`;
+    for (const m of run.settledMembers) {
+      const entries = exp.nodeStable(m).log.filter((e) => e.command.clientId === st.client && e.command.requestId === st.request).length;
+      if (entries < 2) out.push(`${m}: retry of ${st.request} added no log entry (${entries})`);
+      if (exp.nodeAppliedRequests(m).filter((k) => k === ref).length !== 1) out.push(`${m}: ${st.request} effect not applied exactly once`);
+    }
+  }
+  // No old value written back: every settled state machine holds the newest written value.
+  const lastWrite = [...c.steps].reverse().find((st) => st.action === 'write' && !st.is_retry)!;
+  for (const m of run.settledMembers) if (exp.nodeValue(m, lastWrite.key) !== lastWrite.value) out.push(`${m}.${lastWrite.key} = ${exp.nodeValue(m, lastWrite.key)}`);
+  if (run.settledMembers.length < data.cluster.majority_count) out.push('fewer than a majority settled');
   const distinct = new Set(c.steps.map((st) => st.request)).size;
   if (ops.length !== distinct) out.push(`${ops.length} logical operations, expected ${distinct}`);
   const declared = (c as { expected_distinct_logical_operations?: number }).expected_distinct_logical_operations;

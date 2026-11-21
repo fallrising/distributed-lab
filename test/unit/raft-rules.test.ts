@@ -5,7 +5,7 @@ import { RaftNode } from '../../src/sim/node.ts';
 import type { Entry, Outgoing, Payload } from '../../src/sim/messages.ts';
 
 const MEMBERS = ['A', 'B', 'C', 'D', 'E'];
-const node = (id: string, timeout = 4) => new RaftNode(id, { members: MEMBERS, electionTimeout: timeout, heartbeatInterval: 1, gatewayResendInterval: 4, initialValues: {} }, 0);
+const node = (id: string, timeout = 4) => new RaftNode(id, { members: MEMBERS, electionTimeout: timeout, heartbeatInterval: 1, gatewayResendInterval: 4, staleCandidateBackoff: 25, initialValues: {} }, 0);
 const entry = (term: number, requestId: string, value = requestId): Entry => ({ term, command: { clientId: 'writer', requestId, action: 'write', key: 'x', value } });
 const ae = (p: Partial<Extract<Payload, { type: 'AppendEntries' }>>): Payload => ({ type: 'AppendEntries', term: 1, leaderId: 'A', prevLogIndex: 0, prevLogTerm: 0, entries: [], leaderCommit: 0, ...p });
 const only = <T extends Payload['type']>(outs: Outgoing[], type: T) => outs.map((o) => o.payload).filter((p): p is Extract<Payload, { type: T }> => p.type === type);
@@ -14,8 +14,8 @@ const only = <T extends Payload['type']>(outs: Outgoing[], type: T) => outs.map(
 function leaderA(): RaftNode {
   const a = node('A');
   a.tick(4);
-  a.handle('B', { type: 'RequestVoteReply', term: 1, voteGranted: true }, 5);
-  a.handle('C', { type: 'RequestVoteReply', term: 1, voteGranted: true }, 5);
+  a.handle('B', { type: 'RequestVoteReply', term: 1, voteGranted: true, logOk: true }, 5);
+  a.handle('C', { type: 'RequestVoteReply', term: 1, voteGranted: true, logOk: true }, 5);
   assert.equal(a.volatile?.role, 'leader');
   return a;
 }
@@ -87,8 +87,8 @@ test('D5 rule 5: replies of another term are ignored; a higher term turns the no
   const c = node('C');
   c.tick(4); // term 1 candidate
   c.tick(8); // term 2 candidate
-  c.handle('D', { type: 'RequestVoteReply', term: 1, voteGranted: true }, 9);
-  c.handle('E', { type: 'RequestVoteReply', term: 1, voteGranted: true }, 9);
+  c.handle('D', { type: 'RequestVoteReply', term: 1, voteGranted: true, logOk: true }, 9);
+  c.handle('E', { type: 'RequestVoteReply', term: 1, voteGranted: true, logOk: true }, 9);
   assert.equal(c.volatile?.role, 'candidate', 'term-1 votes do not elect a term-2 candidate');
   a.handle('B', { type: 'AppendEntriesReply', term: 0, success: true, matchIndex: 1, prevLogIndex: 0 }, 7);
   assert.equal(a.volatile?.matchIndex.get('B'), 0, 'old-term ack ignored');
@@ -119,8 +119,8 @@ test('D5 rule 7: an old-term entry is not committed by counting replicas alone',
   c.tick(3 + 4);
   c.tick(3 + 4 + 4); // two timeouts without votes: terms 2 and 3
   assert.equal(c.stable.currentTerm, 3);
-  c.handle('D', { type: 'RequestVoteReply', term: 3, voteGranted: true }, 12);
-  c.handle('E', { type: 'RequestVoteReply', term: 3, voteGranted: true }, 12);
+  c.handle('D', { type: 'RequestVoteReply', term: 3, voteGranted: true, logOk: true }, 12);
+  c.handle('E', { type: 'RequestVoteReply', term: 3, voteGranted: true, logOk: true }, 12);
   assert.equal(c.volatile?.role, 'leader');
   c.handle('D', { type: 'AppendEntriesReply', term: 3, success: true, matchIndex: 1, prevLogIndex: 0 }, 13);
   c.handle('E', { type: 'AppendEntriesReply', term: 3, success: true, matchIndex: 1, prevLogIndex: 0 }, 13);
@@ -195,4 +195,21 @@ test('D7: a different intent under the same identity is not deduplicated away; i
   const replies = only(a.handle('C', { type: 'AppendEntriesReply', term: 1, success: true, matchIndex: 2, prevLogIndex: 0 }, 7), 'ClientReply');
   assert.deepEqual(replies.map((r) => r.result), ['已確認', '請求識別衝突']);
   assert.equal(a.volatile?.kv.get('x'), '紅');
+});
+
+test('ADR-0002 E3: a candidate refused for a stale log backs off; a refusal only for an earlier vote does not', () => {
+  const a = node('A');
+  a.tick(4); // candidate, term 1
+  a.handle('B', { type: 'RequestVoteReply', term: 1, voteGranted: false, logOk: true }, 6);
+  assert.equal(a.volatile?.role, 'candidate', 'already voted elsewhere: keep campaigning normally');
+  a.handle('C', { type: 'RequestVoteReply', term: 1, voteGranted: false, logOk: false }, 6);
+  assert.equal(a.volatile?.role, 'follower');
+  assert.equal(a.volatile?.electionResetAt, 6 + 25);
+  assert.deepEqual(a.tick(10), [], 'no new campaign at its normal timeout');
+  assert.equal(a.stable.currentTerm, 1, 'term not bumped again');
+  // The voter reports logOk from its own log comparison.
+  const c = node('C', 7);
+  c.handle('B', ae({ term: 1, leaderId: 'B', entries: [entry(1, 'r1')] }), 3);
+  const refusal = c.handle('A', { type: 'RequestVote', term: 2, candidateId: 'A', lastLogIndex: 0, lastLogTerm: 0 }, 5);
+  assert.deepEqual(only(refusal, 'RequestVoteReply')[0], { type: 'RequestVoteReply', term: 2, voteGranted: false, logOk: false });
 });

@@ -5,6 +5,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { scenarios } from '../helpers/data.ts';
 import { buildTeachingModel, renderTeachingHtml } from '../../src/teaching/page.ts';
+import { replayExperiment } from '../../src/sim/experiment.ts';
+import { canonicalJson } from '../../src/canonical.ts';
 
 test('AC-EXP-04（人工確認另計）教學畫面資料忠於 teaching_fixture', () => {
   const data = scenarios();
@@ -38,4 +40,14 @@ test('AC-EXP-04（人工確認另計）畫面標示自述、不宣稱唯一 lead
   assert.equal(f.global_single_leader_at_every_instant_required, false);
   for (const banned of ['唯一 leader', '唯一的 leader', '全域 leader', '真正的 leader']) assert.ok(!html.includes(banned), `does not claim "${banned}"`);
   for (const topic of f.explanation_topics) assert.ok(html.includes(topic), `explains ${topic}`);
+});
+
+test('AC-EXP-04（人工確認另計）畫面的資料可由錄製的選擇重播得到', () => {
+  const model = buildTeachingModel(scenarios());
+  const replay = replayExperiment(model.recording);
+  for (const fr of model.frames) {
+    replay.advanceTo(fr.tick);
+    assert.equal(canonicalJson(replay.nodeStatuses()), canonicalJson(fr.nodes), `tick ${fr.tick}`);
+  }
+  assert.equal(replay.replayRemaining(), 0);
 });

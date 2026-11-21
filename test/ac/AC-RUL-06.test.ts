@@ -47,6 +47,13 @@ function pendingViolations(data: Scenarios, s: Strategy): string[] {
   const ref = requestKey(c.original.client, c.original.request);
   const dropped = exp.log().filter((e) => e.kind === 'effect' && e.action === 'drop' && e.requestRef === ref);
   if (dropped.length === 0) out.push('no reply was dropped');
+  // Only replies sent before the retry are part of the fault; each was dropped before delivery.
+  const retryAt = op.attempts[1]?.sentAt ?? Infinity;
+  for (const d of dropped) {
+    const m = exp.messageById(d.target);
+    if (!m || m.sentAt >= retryAt) out.push(`dropped ${d.target} was not sent before the retry`);
+    if (exp.log().some((e) => e.kind === 'effect' && e.action === 'deliver' && e.target === d.target)) out.push(`${d.target} delivered`);
+  }
   if (op.attempts[0]?.result !== 'unavailable') out.push(`first attempt ${op.attempts[0]?.result}, expected unavailable`);
   if (op.attempts.length < 2) out.push('no retry of the same request');
   if (op.outcome.status !== '已完成' || op.outcome.result !== c.expected_final_result) out.push(`final ${JSON.stringify(op.outcome)}`);

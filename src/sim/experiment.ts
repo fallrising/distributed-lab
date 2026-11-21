@@ -135,7 +135,21 @@ export class Experiment {
     for (const m of config.members) {
       const timeout = config.electionTimeouts[m];
       if (timeout === undefined) throw new Error(`no election timeout for ${m}`);
-      this.nodes.set(m, new RaftNode(m, { members: config.members, electionTimeout: timeout, heartbeatInterval: config.heartbeatInterval, gatewayResendInterval: config.gatewayResendInterval, initialValues: config.initialValues }, 0));
+      this.nodes.set(
+        m,
+        new RaftNode(
+          m,
+          {
+            members: config.members,
+            electionTimeout: timeout,
+            heartbeatInterval: config.heartbeatInterval,
+            gatewayResendInterval: config.gatewayResendInterval,
+            staleCandidateBackoff: Math.max(...Object.values(config.electionTimeouts)),
+            initialValues: config.initialValues,
+          },
+          0,
+        ),
+      );
     }
     for (const c of config.clients) this.clients.set(c, new Client(c, { attemptTimeout: config.clientAttemptTimeout }));
     this.bindAliases();
@@ -305,7 +319,9 @@ export class Experiment {
         const ref = `${ev.client}/${ev.requestId}`;
         const ext = this.append({ tick: t, kind: 'external', action: 'client-invoke', target: ev.via, requestRef: ref, detail: `${ev.action} ${ev.key}${ev.value !== undefined ? `=${ev.value}` : ''}` });
         const send = client.invoke({ requestId: ev.requestId, action: ev.action, key: ev.key, ...(ev.value !== undefined ? { value: ev.value } : {}), via: ev.via, retryIfUnavailable: this.config.retryIfUnavailable }, t);
-        this.clientSend(ev.client, send.via, send.command, t, ext.seq, send.kind === 'new' ? 'client-send' : send.kind === 'retry' ? 'client-resend' : 'client-conflict-send');
+        if (send.kind === 'conflict-local') {
+          this.append({ tick: t, kind: 'effect', action: 'client-conflict-rejected', target: ev.client, outcome: '請求識別衝突（原操作尚無結果，用戶端拒絕，未送出）', requestRef: ref, causeSeq: ext.seq });
+        } else this.clientSend(ev.client, send.via, send.command, t, ext.seq, send.kind === 'new' ? 'client-send' : send.kind === 'retry' ? 'client-resend' : 'client-conflict-send');
         return;
       }
       case 'partition': {

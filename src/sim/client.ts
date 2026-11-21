@@ -1,5 +1,5 @@
 // Client logical operations, attempts, retries and conflicting attempts (ADR-0001 D7, D8; ADR-0002 E1).
-import { intentOf, type Action, type Command } from '../types.ts';
+import { CONFLICT, UNAVAILABLE, intentOf, type Action, type Command } from '../types.ts';
 
 export type AttemptResult = 'reply' | 'unavailable' | 'none';
 
@@ -47,8 +47,11 @@ export interface ClientParams {
 export interface ClientSend {
   readonly via: string;
   readonly command: Command;
-  /** 'new' operation, 'retry' of the same intent, or 'conflict' (same identity, different intent). */
-  readonly kind: 'new' | 'retry' | 'conflict';
+  /**
+   * 'new' operation, 'retry' of the same intent, 'conflict' (same identity, different intent, sent), or
+   * 'conflict-local': rejected by the client itself because the original has no result yet (nothing is sent).
+   */
+  readonly kind: 'new' | 'retry' | 'conflict' | 'conflict-local';
 }
 
 export interface InvokeSpec {
@@ -83,6 +86,13 @@ export class Client {
         // Same identity and intent: a retry, i.e. another attempt of the original operation.
         existing.attempts.push({ sentAt: now, via: spec.via, result: 'none' });
         return { via: spec.via, command, kind: 'retry' };
+      }
+      // ADR-0002 E1: while the original has no result, a different intent could be applied first by the
+      // state machine, so the client rejects the reuse itself. Afterwards the state machine has the
+      // original applied before any later entry and answers the conflict.
+      if (existing.outcome.status === '未完成') {
+        existing.conflicts.push({ sentAt: now, via: spec.via, intent, result: CONFLICT, at: now });
+        return { via: spec.via, command, kind: 'conflict-local' };
       }
       existing.conflicts.push({ sentAt: now, via: spec.via, intent });
       return { via: spec.via, command, kind: 'conflict' };
@@ -133,7 +143,8 @@ export class Client {
   }
 
   hasTimerDue(now: number): boolean {
-    return this.ops.some((o) => o.attempts.some((a) => a.result === 'none' && now >= a.sentAt + this.params.attemptTimeout));
+    const due = (sentAt: number) => now >= sentAt + this.params.attemptTimeout;
+    return this.ops.some((o) => o.attempts.some((a) => a.result === 'none' && due(a.sentAt)) || o.conflicts.some((c) => c.result === undefined && due(c.sentAt)));
   }
 
   /** Step 4: expire attempts as 不可用 and resend the same request when the scenario asks for it. */
@@ -150,6 +161,13 @@ export class Client {
             op.attempts.push({ sentAt: now, via: a.via, result: 'none' });
             resends.push({ via: a.via, command: this.commandOf(op), kind: 'retry' });
           }
+        }
+      }
+      // A conflict attempt that gets no answer is 不可用 for that attempt; it is never resent.
+      for (const c of op.conflicts) {
+        if (c.result === undefined && now >= c.sentAt + this.params.attemptTimeout) {
+          c.result = UNAVAILABLE;
+          c.at = now;
         }
       }
     }

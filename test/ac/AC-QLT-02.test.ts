@@ -34,11 +34,14 @@ function violations(data: Scenarios, opts: LivenessOptions): string[] {
 test('AC-QLT-02 恢復穩定多數後在固定窗口內完成（liveness_case，針對性前綴）', () => {
   const data = scenarios();
   const failures: string[] = [];
-  assert.ok(LIVENESS_TARGETED_PREFIXES.length >= 3);
+  assert.ok(LIVENESS_TARGETED_PREFIXES.includes('stale-a-older-term'), 'includes the ADR-0002 review counterexamples');
   for (const prefix of LIVENESS_TARGETED_PREFIXES) {
-    for (const seed of [data.replay_case.seed, 1, 2, 3, 4, 5, 6, 7, 8, 9]) {
-      const v = violations(data, { prefix, strategy: { type: 'seed', seed } });
-      if (v.length > 0) failures.push(`${prefix}/seed:${seed}: ${v.join('; ')}`);
+    // The data leaves the fresh read's gateway open: every client-reachable member is tried.
+    for (const readVia of data.liveness_case.stable_window.client_reachable_members) {
+      for (const seed of [data.replay_case.seed, 1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+        const v = violations(data, { prefix, readVia, strategy: { type: 'seed', seed } });
+        if (v.length > 0) failures.push(`${prefix}/via ${readVia}/seed:${seed}: ${v.join('; ')}`);
+      }
     }
   }
   assert.deepEqual(failures, []);
@@ -49,7 +52,8 @@ test('AC-QLT-02 恢復穩定多數後在固定窗口內完成（liveness_case，
   const failures: string[] = [];
   for (const prefixBound of [2, 6]) {
     for (let seed = 1; seed <= 200; seed++) {
-      const v = violations(data, { prefix: 'random', prefixSeed: seed, prefixBound, strategy: { type: 'seed', seed } });
+      const readVia = data.liveness_case.stable_window.client_reachable_members[seed % 3];
+      const v = violations(data, { prefix: 'random', prefixSeed: seed, prefixBound, strategy: { type: 'seed', seed }, ...(readVia !== undefined ? { readVia } : {}) });
       if (v.length > 0) failures.push(`bound ${prefixBound}/seed:${seed}: ${v.join('; ')}`);
     }
   }
