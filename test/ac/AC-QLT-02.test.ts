@@ -47,6 +47,19 @@ test('AC-QLT-02 恢復穩定多數後在固定窗口內完成（liveness_case，
   assert.deepEqual(failures, []);
 });
 
+test('AC-QLT-02 恢復穩定多數後在固定窗口內完成（ADR-0002 審查找到的活鎖排程）', () => {
+  const data = scenarios();
+  // Without the stale-candidate back-off (ADR-0002 E3) these schedules miss 60/80 or never finish.
+  const failures: string[] = [];
+  for (const readVia of data.liveness_case.stable_window.client_reachable_members) {
+    for (const seed of [40, 276, 386, 679]) {
+      const v = violations(data, { prefix: 'stale-a-five-events', prefixBound: 2, readVia, strategy: { type: 'seed', seed } });
+      if (v.length > 0) failures.push(`via ${readVia}/seed:${seed}: ${v.join('; ')}`);
+    }
+  }
+  assert.deepEqual(failures, []);
+});
+
 test('AC-QLT-02 恢復穩定多數後在固定窗口內完成（liveness_case，200 個前綴種子 × 前綴傳遞上限 2 與 6）', () => {
   const data = scenarios();
   const failures: string[] = [];

@@ -33,7 +33,8 @@ export function judgeLiveness(exp: Experiment, w: LivenessWindow): LivenessJudge
     if (!missing.includes(m)) missing.push(m);
   };
   if (exp.now < w.to) add(`觀察未到窗口終點 ${w.to}`);
-  const inWindow = rec.script.filter((e) => e.tick > w.from && e.tick <= w.to);
+  // Events at the window's first tick count as inside it, except the heal/crash that establish it.
+  const inWindow = rec.script.filter((e) => e.tick >= w.from && e.tick <= w.to && !(e.tick === w.from && (e.type === 'heal' || e.type === 'crash')));
   // Alive members: as specified, a majority, and unchanged inside the window.
   const alive = exp.nodeStatuses().filter((n) => n.alive).map((n) => n.node);
   if (w.alive.length < majority || !same(alive, w.alive)) add(MISSING_MAJORITY);
@@ -46,7 +47,7 @@ export function judgeLiveness(exp: Experiment, w: LivenessWindow): LivenessJudge
   // Clients reach the specified members.
   if (!same(exp.clientReachableNow(), w.clientReachable) || inWindow.some((e) => e.type === 'client-reach')) add('客戶端可達指定成員');
   // Bounded delivery inside the window.
-  const bounds = [exp.deliveryBoundAt(w.from + 1), ...(rec.config.deliveryBounds ?? []).filter((b) => b.fromTick > w.from && b.fromTick <= w.to).map((b) => b.bound)];
+  const bounds = [exp.deliveryBoundAt(w.from), ...(rec.config.deliveryBounds ?? []).filter((b) => b.fromTick > w.from && b.fromTick <= w.to).map((b) => b.bound)];
   if (bounds.some((b) => b > w.deliveryBound)) add('傳遞上限');
 
   const violations: string[] = [];
