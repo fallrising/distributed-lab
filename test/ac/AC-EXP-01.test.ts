@@ -98,7 +98,8 @@ test('AC-EXP-01 組合故障的控制與日誌符合明確語義（fault_trace�
             return m !== undefined && side(m.from) !== -1 && side(m.to) !== -1 && side(m.from) !== side(m.to);
           });
           assert.ok(crossing.length > 0, 'the partition has pending cross-group traffic to drop');
-          assert.deepEqual(effects.filter((x) => x.action === 'partition-drop').map((x) => x.target).sort(), [...crossing].sort());
+          // Pending cross-group messages are dropped at once (later sends across the cut are dropped at send time).
+          assert.deepEqual(effects.filter((x) => x.action === 'partition-drop' && pendingBefore.has(x.target)).map((x) => x.target).sort(), [...crossing].sort());
           assert.ok(exp.pending().every((m) => side(m.from) === -1 || side(m.to) === -1 || side(m.from) === side(m.to)));
           break;
         }
@@ -136,11 +137,11 @@ test('AC-EXP-01 組合故障的控制與日誌符合明確語義（fault_trace�
   assert.equal(deliveredTicks.get(mOne), 5);
 
   // Manual mode: nothing is delivered without a user deliver.
-  const delivers = exp.log().filter((x) => x.action === 'deliver');
+  const delivers = exp.log().filter((x) => x.kind === 'effect' && x.action === 'deliver');
   assert.ok(delivers.every((d) => d.causeSeq !== undefined && exp.log()[d.causeSeq]?.action === 'deliver' && exp.log()[d.causeSeq]?.kind === 'external'));
 
   // Heal does not resurrect dropped messages: they never reappear and cannot be delivered.
-  const dropped = exp.log().filter((x) => x.action.endsWith('drop')).map((x) => x.target);
+  const dropped = exp.log().filter((x) => x.kind === 'effect' && x.action.endsWith('drop')).map((x) => x.target);
   exp.advance(5);
   assert.ok(!exp.pending().some((m) => dropped.includes(m.id)));
   exp.schedule({ tick: exp.now + 1, type: 'deliver', message: mThree });
@@ -158,8 +159,8 @@ test('AC-EXP-01 組合故障的控制與日誌符合明確語義（fault_trace�
   assert.equal(trace.required_log_context.length, 7);
   assert.ok(log.every((e) => Number.isInteger(e.tick) && Number.isInteger(e.seq) && (e.kind === 'external' || e.kind === 'effect') && typeof e.action === 'string' && typeof e.target === 'string'));
   assert.ok(log.some((e) => e.messageRelation?.originId !== undefined), '原訊息關係');
-  assert.ok(log.filter((e) => e.action.endsWith('drop') || e.action === 'deliver').every((e) => typeof e.outcome === 'string'), '傳遞或丟棄結果');
-  assert.ok(log.filter((e) => e.action === 'deliver' && exp.messageById(e.target)?.to.match(/^[A-E]$/)).every((e) => e.nodeStatus !== undefined), '節點自述狀態');
+  assert.ok(log.filter((e) => e.kind === 'effect' && (e.action.endsWith('drop') || e.action === 'deliver')).every((e) => typeof e.outcome === 'string'), '傳遞或丟棄結果');
+  assert.ok(log.filter((e) => e.kind === 'effect' && e.action === 'deliver' && exp.messageById(e.target)?.to.match(/^[A-E]$/)).every((e) => e.nodeStatus !== undefined), '節點自述狀態');
   assert.ok(log.every((e, i) => e.seq === i), 'append-only sequence');
 });
 

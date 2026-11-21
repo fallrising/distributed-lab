@@ -18,9 +18,9 @@ function violations(data: Scenarios, run: PartitionRun): string[] {
   const ops = exp.history();
   const op = (id: string) => ops.find((o) => o.requestId === id);
   const [minoritySpec, majoritySpec] = c.new_operations;
-  const minority = op(minoritySpec!.request);
-  const majority = op(majoritySpec!.request);
-  const probe = op(probeSpec.operation.request);
+  const minority = op(minoritySpec!.request as string);
+  const majority = op(majoritySpec!.request as string);
+  const probe = op(probeSpec.operation.request as string);
 
   if (exp.now !== probeSpec.observe_through_tick) out.push(`observed through ${exp.now}, expected ${probeSpec.observe_through_tick}`);
   // Minority side: the new write is not confirmed (未確認或不可用).

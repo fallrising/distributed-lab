@@ -39,7 +39,9 @@ function violations(data: Scenarios, run: CounterfactualRun): string[] {
   else {
     if (brOp.outcome.result !== c.branch.expected_pending_request) out.push(`branch result ${brOp.outcome.result}`);
     if (brOp.outcome.complete > c.branch.complete_by_tick) out.push(`branch completed at ${brOp.outcome.complete}`);
-    if (canonicalJson(brOp.attempts[0]) !== canonicalJson(atBranch?.attempts[0])) out.push('branch did not keep tracking the original operation');
+    // Same logical operation: same invoke and the same first attempt (its result may evolve after the branch tick).
+    const first = (o: typeof atBranch) => o && { invoke: o.invoke, sentAt: o.attempts[0]?.sentAt, via: o.attempts[0]?.via };
+    if (canonicalJson(first(brOp)) !== canonicalJson(first(atBranch))) out.push('branch did not keep tracking the original operation');
   }
   // The original experiment is untouched by branching.
   if (canonicalJson({ r: base.recording(), o: base.observation() }) !== run.baseFingerprintBeforeBranch) out.push('base changed by branching');
