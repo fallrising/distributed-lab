@@ -1,0 +1,41 @@
+import type { Command } from '../types.ts';
+
+export interface Entry {
+  readonly term: number;
+  readonly command: Command;
+}
+
+export type Payload =
+  | { readonly type: 'RequestVote'; readonly term: number; readonly candidateId: string; readonly lastLogIndex: number; readonly lastLogTerm: number }
+  | { readonly type: 'RequestVoteReply'; readonly term: number; readonly voteGranted: boolean }
+  | {
+      readonly type: 'AppendEntries';
+      readonly term: number;
+      readonly leaderId: string;
+      readonly prevLogIndex: number;
+      readonly prevLogTerm: number;
+      readonly entries: readonly Entry[];
+      readonly leaderCommit: number;
+    }
+  | { readonly type: 'AppendEntriesReply'; readonly term: number; readonly success: boolean; readonly matchIndex: number; readonly prevLogIndex: number }
+  | { readonly type: 'ClientRequest'; readonly command: Command }
+  | { readonly type: 'Forward'; readonly command: Command }
+  | { readonly type: 'ClientReply'; readonly clientId: string; readonly requestId: string; readonly result: string }
+  | { readonly type: 'Diagnostic'; readonly label: string };
+
+export interface Outgoing {
+  readonly to: string;
+  readonly payload: Payload;
+}
+
+export function requestRefOf(p: Payload): string | undefined {
+  switch (p.type) {
+    case 'ClientRequest':
+    case 'Forward':
+      return `${p.command.clientId}/${p.command.requestId}`;
+    case 'ClientReply':
+      return `${p.clientId}/${p.requestId}`;
+    default:
+      return undefined;
+  }
+}
