@@ -85,3 +85,20 @@ test('D9: budgets are per key, so an illegal key is still found after another ke
   assert.equal(checkHistory(ops.filter((o) => o.key === 'a'), {}, { maxStates: 50 }).type, '未判定');
   assert.throws(() => checkHistory(ops, {}, { timeBudgetMs: 10 }), /clock/);
 });
+
+test('ADR-0002 E1: a different intent before the original has a result is rejected by the client; unanswered conflicts become 不可用', async () => {
+  const { Client } = await import('../../src/sim/client.ts');
+  const c = new Client('writer', { attemptTimeout: 20 });
+  assert.equal(c.invoke({ requestId: 'r', action: 'write', key: 'x', value: '紅', via: 'A', retryIfUnavailable: false }, 1).kind, 'new');
+  const early = c.invoke({ requestId: 'r', action: 'write', key: 'x', value: '藍', via: 'A', retryIfUnavailable: false }, 2);
+  assert.equal(early.kind, 'conflict-local');
+  assert.equal(c.ops[0]?.conflicts[0]?.result, '請求識別衝突');
+  c.onReply('r', c.ops[0]!.intent, '已確認', 5);
+  const late = c.invoke({ requestId: 'r', action: 'read', key: 'x', via: 'A', retryIfUnavailable: true }, 6);
+  assert.equal(late.kind, 'conflict');
+  const { resends } = c.tick(26);
+  assert.equal(c.ops[0]?.conflicts[1]?.result, '不可用');
+  assert.deepEqual(resends, [], 'conflict attempts are never resent');
+  assert.equal(c.ops.length, 1);
+  assert.equal(c.ops[0]?.outcome.status === '已完成' && c.ops[0].outcome.result, '已確認');
+});

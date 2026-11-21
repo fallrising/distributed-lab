@@ -7,7 +7,13 @@ export interface Entry {
 
 export type Payload =
   | { readonly type: 'RequestVote'; readonly term: number; readonly candidateId: string; readonly lastLogIndex: number; readonly lastLogTerm: number }
-  | { readonly type: 'RequestVoteReply'; readonly term: number; readonly voteGranted: boolean }
+  | {
+      readonly type: 'RequestVoteReply';
+      readonly term: number;
+      readonly voteGranted: boolean;
+      /** False when the voter refused because the candidate's log is not at least as up to date (ADR-0002 E3). */
+      readonly logOk: boolean;
+    }
   | {
       readonly type: 'AppendEntries';
       readonly term: number;
@@ -20,7 +26,7 @@ export type Payload =
   | { readonly type: 'AppendEntriesReply'; readonly term: number; readonly success: boolean; readonly matchIndex: number; readonly prevLogIndex: number }
   | { readonly type: 'ClientRequest'; readonly command: Command }
   | { readonly type: 'Forward'; readonly command: Command }
-  | { readonly type: 'ClientReply'; readonly clientId: string; readonly requestId: string; readonly result: string }
+  | { readonly type: 'ClientReply'; readonly clientId: string; readonly requestId: string; readonly intent: string; readonly result: string }
   | { readonly type: 'Diagnostic'; readonly label: string };
 
 export interface Outgoing {

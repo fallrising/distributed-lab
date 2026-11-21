@@ -26,6 +26,8 @@ export interface VolatileState {
   kv: Map<string, string>;
   /** Request-identity dedup table of the state machine: key -> {intent, result}. */
   applied: Map<string, { intent: string; result: string }>;
+  /** Request keys in the order their (first and only) effect was applied by this state machine. */
+  effects: string[];
   votes: Set<string>;
   nextIndex: Map<string, number>;
   matchIndex: Map<string, number>;
@@ -39,6 +41,8 @@ export interface NodeParams {
   readonly electionTimeout: number;
   readonly heartbeatInterval: number;
   readonly gatewayResendInterval: number;
+  /** ADR-0002 E3: a candidate refused for a stale log waits this long before campaigning again. */
+  readonly staleCandidateBackoff: number;
   readonly initialValues: Readonly<Record<string, string>>;
 }
 
@@ -84,6 +88,7 @@ export class RaftNode {
       lastApplied: 0,
       kv: new Map(Object.entries(this.params.initialValues)),
       applied: new Map(),
+      effects: [],
       votes: new Set(),
       nextIndex: new Map(),
       matchIndex: new Map(),
@@ -239,22 +244,31 @@ export class RaftNode {
     const v = this.alive();
     this.observeTerm(p.term, now);
     let granted = false;
+    const upToDate = p.lastLogTerm > this.lastLogTerm() || (p.lastLogTerm === this.lastLogTerm() && p.lastLogIndex >= this.lastLogIndex());
     if (p.term === this.stable.currentTerm) {
-      const upToDate = p.lastLogTerm > this.lastLogTerm() || (p.lastLogTerm === this.lastLogTerm() && p.lastLogIndex >= this.lastLogIndex());
       if ((this.stable.votedFor === null || this.stable.votedFor === p.candidateId) && upToDate) {
         this.stable.votedFor = p.candidateId; // Rule 1: persisted before the reply is produced.
         v.electionResetAt = now; // Rule 8: granting a vote.
         granted = true;
       }
     }
-    return [{ to: from, payload: { type: 'RequestVoteReply', term: this.stable.currentTerm, voteGranted: granted } }];
+    return [{ to: from, payload: { type: 'RequestVoteReply', term: this.stable.currentTerm, voteGranted: granted, logOk: upToDate } }];
   }
 
   private onRequestVoteReply(from: string, p: Extract<Payload, { type: 'RequestVoteReply' }>, now: number): Outgoing[] {
     const v = this.alive();
     this.observeTerm(p.term, now);
     // Rule 5: replies of another term are ignored.
-    if (v.role !== 'candidate' || p.term !== this.stable.currentTerm || !p.voteGranted) return [];
+    if (v.role !== 'candidate' || p.term !== this.stable.currentTerm) return [];
+    if (!p.voteGranted) {
+      // ADR-0002 E3: refused for a stale log. Step down and back off so a node with a newer log can win
+      // instead of being knocked back by our ever-higher terms (the liveness_case livelock).
+      if (!p.logOk) {
+        v.role = 'follower';
+        v.electionResetAt = now + this.params.staleCandidateBackoff;
+      }
+      return [];
+    }
     v.votes.add(from);
     return v.votes.size >= this.majority ? this.becomeLeader(now) : [];
   }
@@ -351,8 +365,9 @@ export class RaftNode {
           result = CONFIRMED;
         } else result = v.kv.get(c.key) ?? ABSENT;
         v.applied.set(key, { intent, result });
+        v.effects.push(key);
       }
-      const reply: Outgoing = { to: c.clientId, payload: { type: 'ClientReply', clientId: c.clientId, requestId: c.requestId, result } };
+      const reply: Outgoing = { to: c.clientId, payload: { type: 'ClientReply', clientId: c.clientId, requestId: c.requestId, intent, result } };
       const isGateway = v.gateway.delete(gatewayKey(c));
       // Leader replies directly; the gateway also replies as a backup (same reply once if both).
       if (v.role === 'leader' || isGateway) out.push(reply);

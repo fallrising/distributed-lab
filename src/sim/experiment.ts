@@ -23,6 +23,8 @@ export interface ExperimentConfig {
   readonly clientAttemptTimeout: number;
   /** Auto mode: each message's delay is chosen in [1, deliveryBound]. */
   readonly deliveryBound: number;
+  /** Optional time-dependent bounds: from `fromTick` on, sends use `bound` (ADR-0002 E3). */
+  readonly deliveryBounds?: readonly { readonly fromTick: number; readonly bound: number }[];
   readonly deliveryMode: 'auto' | 'manual';
   readonly initialValues: Readonly<Record<string, string>>;
   readonly retryIfUnavailable: boolean;
@@ -47,7 +49,8 @@ export type ScriptEvent =
   | { readonly tick: number; readonly type: 'delay'; readonly message: string; readonly at: number }
   | { readonly tick: number; readonly type: 'drop'; readonly message: string }
   | { readonly tick: number; readonly type: 'duplicate'; readonly message: string; readonly copyAlias?: string }
-  | { readonly tick: number; readonly type: 'deliver'; readonly message: string };
+  | { readonly tick: number; readonly type: 'deliver'; readonly message: string }
+  | { readonly tick: number; readonly type: 'client-reach'; readonly members: readonly string[] };
 
 export interface Recording {
   readonly config: ExperimentConfig;
@@ -132,7 +135,21 @@ export class Experiment {
     for (const m of config.members) {
       const timeout = config.electionTimeouts[m];
       if (timeout === undefined) throw new Error(`no election timeout for ${m}`);
-      this.nodes.set(m, new RaftNode(m, { members: config.members, electionTimeout: timeout, heartbeatInterval: config.heartbeatInterval, gatewayResendInterval: config.gatewayResendInterval, initialValues: config.initialValues }, 0));
+      this.nodes.set(
+        m,
+        new RaftNode(
+          m,
+          {
+            members: config.members,
+            electionTimeout: timeout,
+            heartbeatInterval: config.heartbeatInterval,
+            gatewayResendInterval: config.gatewayResendInterval,
+            staleCandidateBackoff: Math.max(...Object.values(config.electionTimeouts)),
+            initialValues: config.initialValues,
+          },
+          0,
+        ),
+      );
     }
     for (const c of config.clients) this.clients.set(c, new Client(c, { attemptTimeout: config.clientAttemptTimeout }));
     this.bindAliases();
@@ -201,6 +218,46 @@ export class Experiment {
     return this.config.members.map((m) => this.nodeStatus(m));
   }
 
+  /** The node's state-machine value for `key` (undefined when absent or crashed). Observer view. */
+  nodeValue(id: string, key: string): string | undefined {
+    return this.nodes.get(id)?.volatile?.kv.get(key);
+  }
+
+  /** Request keys whose effect this node's state machine applied, in order (dedup hits are not effects). */
+  nodeAppliedRequests(id: string): string[] {
+    return [...(this.nodes.get(id)?.volatile?.effects ?? [])];
+  }
+
+  clientReachableNow(): string[] {
+    return this.config.members.filter((m) => this.clientReachable.has(m));
+  }
+
+  partitionGroups(): string[][] | null {
+    return this.groups === null ? null : this.groups.map((g) => [...g]);
+  }
+
+  deliveryBoundAt(t: number): number {
+    let bound = this.config.deliveryBound;
+    for (const b of this.config.deliveryBounds ?? []) if (t >= b.fromTick) bound = b.bound;
+    return bound;
+  }
+
+  /**
+   * Observer note (ADR-0002 E3): from the gateway, count live nodes in its connected group. Fewer than a
+   * majority means the liveness precondition "存活且可互相送達的多數" is missing. Nodes do not know this.
+   */
+  private missingMajorityFrom(via: string): string | null {
+    const majority = Math.floor(this.config.members.length / 2) + 1;
+    const node = this.nodes.get(via);
+    if (node === undefined) return null;
+    const group = this.groupOf(via) ?? [...this.config.members];
+    const usable = group.filter((m) => (this.nodes.get(m) as RaftNode).volatile !== null);
+    const viaUsable = node.volatile !== null && this.clientReachable.has(via);
+    if (viaUsable && usable.length >= majority) return null;
+    const why = viaUsable ? `可用 ${usable.join('、') || '無'}；需要 ${majority}` : `閘道 ${via} 不可用`;
+    return `缺少前提：存活且可互相送達的多數（${why}）`;
+  }
+
   nodeStable(id: string): StableStorage {
     const n = this.nodes.get(id);
     if (n === undefined) throw new Error(`unknown node ${id}`);
@@ -247,6 +304,8 @@ export class Experiment {
       const { timeouts, resends } = (this.clients.get(id) as Client).tick(t);
       for (const { op, attempt } of timeouts) {
         this.append({ tick: t, kind: 'effect', action: 'client-timeout', target: id, outcome: '不可用', requestRef: `${id}/${op.requestId}`, detail: `attempt sent at ${attempt.sentAt} via ${attempt.via}` });
+        const missing = this.missingMajorityFrom(attempt.via);
+        if (missing !== null) this.append({ tick: t, kind: 'effect', action: 'precondition', target: attempt.via, outcome: missing, requestRef: `${id}/${op.requestId}` });
       }
       for (const r of resends) this.clientSend(id, r.via, r.command, t, undefined, 'client-resend');
     }
@@ -260,7 +319,9 @@ export class Experiment {
         const ref = `${ev.client}/${ev.requestId}`;
         const ext = this.append({ tick: t, kind: 'external', action: 'client-invoke', target: ev.via, requestRef: ref, detail: `${ev.action} ${ev.key}${ev.value !== undefined ? `=${ev.value}` : ''}` });
         const send = client.invoke({ requestId: ev.requestId, action: ev.action, key: ev.key, ...(ev.value !== undefined ? { value: ev.value } : {}), via: ev.via, retryIfUnavailable: this.config.retryIfUnavailable }, t);
-        this.clientSend(ev.client, send.via, send.command, t, ext.seq, 'client-send');
+        if (send.kind === 'conflict-local') {
+          this.append({ tick: t, kind: 'effect', action: 'client-conflict-rejected', target: ev.client, outcome: '請求識別衝突（原操作尚無結果，用戶端拒絕，未送出）', requestRef: ref, causeSeq: ext.seq });
+        } else this.clientSend(ev.client, send.via, send.command, t, ext.seq, send.kind === 'new' ? 'client-send' : send.kind === 'retry' ? 'client-resend' : 'client-conflict-send');
         return;
       }
       case 'partition': {
@@ -272,6 +333,11 @@ export class Experiment {
           const m = this.messages.get(id) as Message;
           if (this.blocked(m.from, m.to)) this.discard(m, t, 'partition-drop', ext.seq, '已丟棄（跨分割）');
         }
+        return;
+      }
+      case 'client-reach': {
+        this.append({ tick: t, kind: 'external', action: 'client-reach', target: ev.members.join('') || '-' });
+        this.clientReachable = new Set(ev.members);
         return;
       }
       case 'heal': {
@@ -398,7 +464,7 @@ export class Experiment {
       return null;
     }
     if (this.config.deliveryMode === 'auto') {
-      const options = Array.from({ length: this.config.deliveryBound }, (_, i) => i + 1);
+      const options = Array.from({ length: this.deliveryBoundAt(t) }, (_, i) => i + 1);
       m.deliverAt = t + this.chooser.choose('delay', options, { tick: t, from, to });
     }
     this.pendingIds.push(m.id);
@@ -448,7 +514,7 @@ export class Experiment {
     }
     const client = this.clients.get(m.to);
     if (client !== undefined && m.payload.type === 'ClientReply') {
-      const r = client.onReply(m.payload.requestId, m.payload.result, t);
+      const r = client.onReply(m.payload.requestId, m.payload.intent, m.payload.result, t);
       this.append({ ...base, action: 'deliver', outcome: '已傳遞' });
       this.append({ tick: t, kind: 'effect', action: 'client-reply', target: m.to, outcome: `${m.payload.result}${r?.duplicate ? '（重複回覆）' : ''}`, requestRef: `${m.payload.clientId}/${m.payload.requestId}` });
       return;

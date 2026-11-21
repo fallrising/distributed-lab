@@ -10,7 +10,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.src.json && tsc --noEmit -p tsconfig.json",
     "test": "node --test \"test/**/*.test.ts\"",
-    "verify-source": "node scripts/verify-source.ts"
+    "verify-source": "node scripts/verify-source.ts",
+    "teaching": "node scripts/teaching.ts"
   },
   "dependencies": {
     "yaml": "2.9.1"

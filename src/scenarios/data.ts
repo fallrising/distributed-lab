@@ -118,6 +118,82 @@ export interface Scenarios {
     };
   };
   readonly analysis_outcomes: readonly { readonly analysis_status: string; readonly expected: string }[];
+  readonly retry_cases: {
+    readonly completed_write: RetrySequence & { readonly expected_distinct_logical_operations: number };
+    readonly completed_read: RetrySequence;
+    readonly conflicting_intent: {
+      readonly original: RetryStep;
+      readonly conflicting_attempts: readonly RetryStep[];
+      readonly expected_each: string;
+      readonly expected_values_after: Readonly<Record<string, string>>;
+    };
+    readonly pending_retry: {
+      readonly original: RetryStep;
+      readonly fault: string;
+      readonly retry: RetryStep;
+      readonly expected_final_result: string;
+      readonly expected_distinct_logical_operations: number;
+      readonly expected_values_after: Readonly<Record<string, string>>;
+    };
+  };
+  readonly liveness_case: {
+    readonly fault_prefix: { readonly start_tick: number; readonly through_tick: number; readonly network: string; readonly pending_write: RetryStep & { readonly invoke: number } };
+    readonly stable_window: {
+      readonly starts_at_tick: number;
+      readonly ends_at_tick: number;
+      readonly alive_members: string[];
+      readonly other_members: string[];
+      readonly other_members_state: string;
+      readonly delivery_bound_ticks: number;
+      readonly drops: boolean;
+      readonly new_partitions: boolean;
+      readonly client_reachable_members: string[];
+      readonly pending_write_complete_by_tick: number;
+      readonly fresh_read: RetryStep & { readonly invoke: number; readonly complete_by: number; readonly expected: string };
+    };
+    readonly retry_original_if_unavailable: boolean;
+    readonly no_other_writes: boolean;
+  };
+  readonly no_liveness_case: {
+    readonly alive_members: string[];
+    readonly crashed_members: string[];
+    readonly client_reachable_members: string[];
+    readonly observation_end_tick: number;
+    readonly new_write: RetryStep;
+    readonly allowed_results: string[];
+    readonly forbidden_result: string;
+    readonly missing_precondition: string;
+  };
+  readonly teaching_fixture: {
+    readonly basis: string;
+    readonly precondition: string;
+    readonly displayed_states: readonly {
+      readonly node: string;
+      readonly self_reported_role: string;
+      readonly leadership_generation: number;
+      readonly connected_group: string[];
+      readonly new_write_result: string;
+    }[];
+    readonly exact_generation_numbers_are_teaching_example_only: boolean;
+    readonly must_label_role_as_self_reported: boolean;
+    readonly global_single_leader_at_every_instant_required: boolean;
+    readonly explanation_topics: string[];
+  };
+}
+
+export interface RetryStep {
+  readonly request: string;
+  readonly client: string;
+  readonly action: string;
+  readonly key: string;
+  readonly value?: string;
+  readonly expected?: string;
+  readonly is_retry?: boolean;
+}
+
+export interface RetrySequence {
+  readonly steps: readonly RetryStep[];
+  readonly operations_are_sequential: boolean;
 }
 
 export function parseScenarios(text: string): Scenarios {
