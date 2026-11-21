@@ -1,0 +1,22 @@
+{
+  "name": "distributed-lab",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Virtual-time KV cluster lab with fault injection, replay, counterfactual branches and a linearizability checker.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "verify-source": "node scripts/verify-source.ts"
+  },
+  "dependencies": {
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2"
+  }
+}
