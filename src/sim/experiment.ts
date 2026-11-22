@@ -46,6 +46,8 @@ export type ScriptEvent =
   | { readonly tick: number; readonly type: 'heal'; readonly clientReachable?: readonly string[] }
   | { readonly tick: number; readonly type: 'crash'; readonly node: string }
   | { readonly tick: number; readonly type: 'restart'; readonly node: string }
+  | { readonly tick: number; readonly type: 'take-snapshot'; readonly node: string }
+  | { readonly tick: number; readonly type: 'compact'; readonly node: string }
   | { readonly tick: number; readonly type: 'delay'; readonly message: string; readonly at: number }
   | { readonly tick: number; readonly type: 'drop'; readonly message: string }
   | { readonly tick: number; readonly type: 'duplicate'; readonly message: string; readonly copyAlias?: string }
@@ -365,6 +367,20 @@ export class Experiment {
         node.restart(t);
         this.crashSeq.delete(ev.node);
         this.append({ tick: t, kind: 'effect', action: 'node-restarted', target: ev.node, outcome: '自穩定儲存重建', nodeStatus: this.nodeStatus(ev.node), causeSeq: ext.seq });
+        return;
+      }
+      case 'take-snapshot':
+      case 'compact': {
+        const node = this.nodes.get(ev.node);
+        const ext = this.append({ tick: t, kind: 'external', action: ev.type, target: ev.node });
+        try {
+          if (node === undefined) throw new Error(`unknown node ${ev.node}`);
+          if (ev.type === 'take-snapshot') node.takeSnapshot();
+          else node.compact();
+          this.append({ tick: t, kind: 'effect', action: ev.type, target: ev.node, outcome: `已完成：快照至 ${node.stable.snapshot?.lastIncludedIndex ?? 0}，保留 ${node.stable.log.length} 項`, causeSeq: ext.seq, nodeStatus: this.nodeStatus(ev.node) });
+        } catch (error) {
+          this.append({ tick: t, kind: 'effect', action: ev.type, target: ev.node, outcome: `拒絕：${error instanceof Error ? error.message : String(error)}`, causeSeq: ext.seq });
+        }
         return;
       }
       case 'delay': {

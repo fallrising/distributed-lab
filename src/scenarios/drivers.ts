@@ -476,3 +476,149 @@ export function noLivenessWindow(data: Scenarios): LivenessWindow {
 }
 
 export { MISSING_MAJORITY };
+
+// ---------------------------------------------------------------- snapshot_case (ADR-0003)
+
+export interface SnapshotStageState {
+  readonly stable: Record<string, StableStorage>;
+  readonly statuses: NodeStatus[];
+  readonly values: Record<string, Record<string, string | undefined>>;
+}
+
+export interface SnapshotRun {
+  readonly experiment: Experiment;
+  readonly stages: { id: string; start: number; end: number; ok: boolean }[];
+  readonly stageStates: Record<string, SnapshotStageState>;
+  readonly retryTick: number;
+}
+
+/** Sequential stages keep their original deadline, including waiting for followers before snapshotting. */
+export function runSnapshotCase(data: Scenarios, strategy: Strategy, opts: { compaction?: boolean; retryVia?: string } = {}): SnapshotRun {
+  const c = data.snapshot_case;
+  const exp = newExperiment(clusterConfig(data, { deliveryBound: c.stable_delivery_bound_ticks }), strategy);
+  const stages: SnapshotRun['stages'] = [];
+  const stageStates: Record<string, SnapshotStageState> = {};
+  const keys = [...new Set(c.stages.flatMap((s) => s.key === undefined ? Object.keys(s.expected_values ?? {}) : [s.key]))].sort();
+  const capture = (): SnapshotStageState => ({
+    stable: Object.fromEntries(data.cluster.members.map((m) => [m, exp.nodeStable(m)])),
+    statuses: JSON.parse(JSON.stringify(exp.nodeStatuses())) as NodeStatus[],
+    values: Object.fromEntries(data.cluster.members.map((m) => [m, Object.fromEntries(keys.map((k) => [k, exp.nodeValue(m, k)]))])),
+  });
+  const bound = c.completion_bound_per_stage_ticks;
+  const finish = (id: string, start: number, ok: boolean) => {
+    stages.push({ id, start, end: exp.now, ok });
+    stageStates[id] = capture();
+    return ok;
+  };
+  const wait = (deadline: number, predicate: () => boolean) => {
+    while (!predicate() && exp.now < deadline) exp.advance(1);
+    return predicate();
+  };
+  const resultOf = (client: string, request: string) => {
+    const op = exp.history().find((o) => o.client === client && o.requestId === request);
+    return op?.outcome.status === '已完成' ? op.outcome.result : undefined;
+  };
+  const controls = (start: number, events: ScriptEvent[]) => {
+    for (const event of events) exp.schedule(event);
+    exp.advanceTo(start);
+    return events.every((event) => !exp.log().some((entry) => entry.tick === start && entry.kind === 'effect' && entry.action === event.type && entry.target === ('node' in event ? event.node : '') && entry.outcome?.startsWith('拒絕：')));
+  };
+  if (data.snapshot_equivalence.basis !== 'snapshot_case') throw new Error('unsupported snapshot equivalence basis');
+  const without = data.snapshot_equivalence.variants.find((v) => v.id === 'without_compaction');
+  if (without?.omit_stages === undefined) throw new Error('missing without_compaction stages');
+  const omitted = opts.compaction === false ? without.omit_stages : [];
+  let retryTick = -1;
+  for (const stage of c.stages) {
+    if (omitted.includes(stage.id)) continue;
+    const start = exp.now + 1;
+    const deadline = start + bound;
+    let ok: boolean;
+    switch (stage.action) {
+      case 'partition': {
+        if (stage.isolated_member === undefined || stage.others === undefined) throw new Error('invalid isolation stage');
+        exp.schedule({ tick: start, type: 'partition', groups: [[...stage.others], [stage.isolated_member]] });
+        exp.advanceTo(start);
+        ok = true;
+        break;
+      }
+      case 'write':
+      case 'read': {
+        exp.schedule(invokeEvent(stage, start, stage.via ?? firstReachable(exp)));
+        exp.advanceTo(start);
+        ok = wait(deadline, () => {
+          if (resultOf(stage.client as string, stage.request as string) !== (stage.expected ?? stage.require_result)) return false;
+          if (stage.via !== c.lagging_member || stage.action !== 'read') return true;
+          // A leader reply may arrive before E applies the read. Both facts must hold by this deadline.
+          return exp.nodeAppliedRequests(c.lagging_member).includes(`${stage.client}/${stage.request}`) && exp.nodeValue(c.lagging_member, stage.key as string) === stage.expected;
+        });
+        break;
+      }
+      case 'take_snapshot': {
+        const ready = () => (stage.members ?? []).every((m) =>
+          (stage.covers_confirmed_requests ?? []).every((request) => {
+            const op = c.stages.find((s) => s.request === request);
+            return op !== undefined && exp.nodeAppliedRequests(m).includes(`${op.client}/${request}`);
+          }) && Object.entries(stage.expected_values ?? {}).every(([k, v]) => exp.nodeValue(m, k) === v),
+        );
+        // Leave one tick within this same stage for the actual recorded snapshot operation.
+        while (!ready() && exp.now < deadline - 1) exp.advance(1);
+        if (!ready() || exp.now + 1 > deadline) {
+          exp.advanceTo(deadline);
+          ok = false;
+        } else {
+          const at = Math.max(start, exp.now + 1);
+          ok = controls(at, (stage.members ?? []).map((node) => ({ tick: at, type: 'take-snapshot', node })));
+          ok = ok && (stage.members ?? []).every((m) => exp.nodeStable(m).snapshot !== null);
+        }
+        break;
+      }
+      case 'compact_covered_log': {
+        ok = controls(start, (stage.members ?? []).map((node) => ({ tick: start, type: 'compact', node })));
+        ok = ok && (stage.members ?? []).every((m) => {
+          const stable = exp.nodeStable(m);
+          return stable.snapshot !== null && stable.logStartIndex === stable.snapshot.lastIncludedIndex + 1 && !stable.log.some((entry) => (stage.covered_requests ?? []).includes(entry.command.requestId));
+        });
+        break;
+      }
+      case 'crash':
+      case 'restart': {
+        if (stage.target === undefined) throw new Error(`missing ${stage.action} target`);
+        exp.schedule({ tick: start, type: stage.action, node: stage.target });
+        exp.advanceTo(start);
+        ok = exp.nodeStatus(stage.target).alive === (stage.action === 'restart');
+        break;
+      }
+      case 'heal': {
+        exp.schedule({ tick: start, type: 'heal' });
+        exp.advanceTo(start);
+        ok = true; // no hidden wait for E: the next stage starts next tick, while catch-up is in flight
+        break;
+      }
+      default:
+        throw new Error(`unknown snapshot stage action ${stage.action}`);
+    }
+    if (!finish(stage.id, start, ok)) return { experiment: exp, stages, stageStates, retryTick };
+  }
+  const original = c.retry_after_recovery.original_request;
+  const originalResult = resultOf(original.client, original.request);
+  if (originalResult === undefined) return { experiment: exp, stages, stageStates, retryTick };
+  retryTick = exp.now + 1;
+  const priorAttempts = exp.history().find((o) => o.client === original.client && o.requestId === original.request)!.attempts.length;
+  const restarted = c.stages.find((s) => s.action === 'restart')?.target;
+  if (restarted === undefined) throw new Error('missing restarted member for retry');
+  exp.schedule(stepEvent(original, retryTick, opts.retryVia ?? restarted));
+  exp.advanceTo(retryTick);
+  const retried = wait(retryTick + bound, () => {
+    const op = exp.history().find((o) => o.client === original.client && o.requestId === original.request);
+    const attempt = op?.attempts[priorAttempts];
+    return attempt?.sentAt === retryTick && attempt.result === 'reply' && attempt.reply === originalResult;
+  });
+  if (!finish('retry-original', retryTick, retried)) return { experiment: exp, stages, stageStates, retryTick };
+  const fresh = c.retry_after_recovery.new_read;
+  const start = exp.now + 1;
+  exp.schedule(stepEvent(fresh, start, c.lagging_member));
+  exp.advanceTo(start);
+  const freshDone = wait(start + bound, () => resultOf(fresh.client, fresh.request) === fresh.expected && exp.nodeAppliedRequests(c.lagging_member).includes(`${fresh.client}/${fresh.request}`));
+  finish('new-read-after-retry', start, freshDone);
+  return { experiment: exp, stages, stageStates, retryTick };
+}

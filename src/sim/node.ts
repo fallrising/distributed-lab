@@ -1,16 +1,30 @@
 // Raft-style replicated KV node (ADR-0001 D5, D6, D7).
 // A node is exactly two fields: `stable` (survives crash) and `volatile` (null while crashed).
 import { ABSENT, CONFIRMED, CONFLICT, intentOf, requestKey, type Command } from '../types.ts';
-import type { Entry, Outgoing, Payload } from './messages.ts';
+import type { Entry, Outgoing, Payload, Snapshot } from './messages.ts';
+export type { Snapshot } from './messages.ts';
 
 export type Role = 'follower' | 'candidate' | 'leader';
 
 const gatewayKey = (c: Command) => `${requestKey(c.clientId, c.requestId)}#${intentOf(c)}`;
 
+const copyEntry = (e: Entry): Entry => ({ term: e.term, command: { ...e.command } });
+const copySnapshot = (s: Snapshot): Snapshot => ({
+  lastIncludedIndex: s.lastIncludedIndex,
+  lastIncludedTerm: s.lastIncludedTerm,
+  kv: { ...s.kv },
+  applied: Object.fromEntries(Object.entries(s.applied).map(([key, value]) => [key, { ...value }])),
+  effects: [...s.effects],
+});
+
 export interface StableStorage {
   currentTerm: number;
   votedFor: string | null;
   log: Entry[];
+  logStartIndex: number;
+  /** Term of the actual compacted boundary, independently of a newer un-compacted snapshot. */
+  logBaseTerm: number;
+  snapshot: Snapshot | null;
 }
 
 interface GatewayEntry {
@@ -68,7 +82,7 @@ export class RaftNode {
   constructor(id: string, params: NodeParams, now: number) {
     this.id = id;
     this.params = params;
-    this.stable = { currentTerm: 0, votedFor: null, log: [] };
+    this.stable = { currentTerm: 0, votedFor: null, log: [], logStartIndex: 1, logBaseTerm: 0, snapshot: null };
     this.volatile = this.freshVolatile(now);
   }
 
@@ -81,14 +95,15 @@ export class RaftNode {
   }
 
   private freshVolatile(now: number): VolatileState {
+    const snapshot = this.stable.snapshot;
     return {
       role: 'follower',
       leaderId: null,
-      commitIndex: 0,
-      lastApplied: 0,
-      kv: new Map(Object.entries(this.params.initialValues)),
-      applied: new Map(),
-      effects: [],
+      commitIndex: snapshot?.lastIncludedIndex ?? 0,
+      lastApplied: snapshot?.lastIncludedIndex ?? 0,
+      kv: new Map(Object.entries(snapshot?.kv ?? this.params.initialValues)),
+      applied: new Map(Object.entries(snapshot?.applied ?? {}).map(([key, value]) => [key, { ...value }])),
+      effects: [...(snapshot?.effects ?? [])],
       votes: new Set(),
       nextIndex: new Map(),
       matchIndex: new Map(),
@@ -105,6 +120,37 @@ export class RaftNode {
   /** Rebuild from stable storage only (ADR D5). */
   restart(now: number): void {
     this.volatile = this.freshVolatile(now);
+  }
+
+  /** Capture only the applied, committed prefix; taking a snapshot does not compact it. */
+  takeSnapshot(): Snapshot {
+    const v = this.alive();
+    const index = v.lastApplied;
+    const term = this.termAt(index);
+    if (index <= 0 || index > v.commitIndex || term === undefined) throw new Error('no verifiable applied prefix to snapshot');
+    const snapshot: Snapshot = {
+      lastIncludedIndex: index,
+      lastIncludedTerm: term,
+      kv: Object.fromEntries(v.kv),
+      applied: Object.fromEntries([...v.applied].map(([key, value]) => [key, { ...value }])),
+      effects: [...v.effects],
+    };
+    this.stable.snapshot = snapshot;
+    return copySnapshot(snapshot);
+  }
+
+  /** Discard only a prefix already covered by the stable snapshot (ADR-0003 S2). */
+  compact(): void {
+    this.alive();
+    const snapshot = this.stable.snapshot;
+    if (snapshot === null || this.termAt(snapshot.lastIncludedIndex) !== snapshot.lastIncludedTerm) {
+      throw new Error('no verifiable stable snapshot to compact');
+    }
+    const count = snapshot.lastIncludedIndex - this.stable.logStartIndex + 1;
+    if (count < 0) throw new Error('snapshot is behind the compacted boundary');
+    this.stable.log = this.stable.log.slice(count);
+    this.stable.logStartIndex = snapshot.lastIncludedIndex + 1;
+    this.stable.logBaseTerm = snapshot.lastIncludedTerm;
   }
 
   status(): NodeStatus {
@@ -128,11 +174,23 @@ export class RaftNode {
   }
 
   private lastLogIndex(): number {
-    return this.stable.log.length;
+    return this.stable.logStartIndex + this.stable.log.length - 1;
   }
 
   private lastLogTerm(): number {
-    return this.stable.log[this.stable.log.length - 1]?.term ?? 0;
+    return this.termAt(this.lastLogIndex()) as number;
+  }
+
+  private termAt(index: number): number | undefined {
+    if (index === 0) return 0;
+    if (index === this.stable.logStartIndex - 1) return this.stable.logBaseTerm;
+    if (index < this.stable.logStartIndex) return undefined;
+    return this.stable.log[index - this.stable.logStartIndex]?.term;
+  }
+
+  private entryAt(index: number): Entry | undefined {
+    if (index < this.stable.logStartIndex) return undefined;
+    return this.stable.log[index - this.stable.logStartIndex];
   }
 
   // ---------------------------------------------------------------- timers (tick step 3)
@@ -203,6 +261,11 @@ export class RaftNode {
   private appendEntriesFor(peer: string): Outgoing {
     const v = this.alive();
     const next = Math.max(1, v.nextIndex.get(peer) ?? 1);
+    if (next < this.stable.logStartIndex) {
+      const snapshot = this.stable.snapshot;
+      if (snapshot === null) throw new Error('compacted log has no stable snapshot');
+      return { to: peer, payload: { type: 'InstallSnapshot', term: this.stable.currentTerm, leaderId: this.id, snapshot: copySnapshot(snapshot) } };
+    }
     const prev = next - 1;
     return {
       to: peer,
@@ -211,8 +274,8 @@ export class RaftNode {
         term: this.stable.currentTerm,
         leaderId: this.id,
         prevLogIndex: prev,
-        prevLogTerm: prev > 0 ? (this.stable.log[prev - 1] as Entry).term : 0,
-        entries: this.stable.log.slice(prev),
+        prevLogTerm: this.termAt(prev) as number,
+        entries: this.stable.log.slice(next - this.stable.logStartIndex).map(copyEntry),
         leaderCommit: v.commitIndex,
       },
     };
@@ -230,6 +293,10 @@ export class RaftNode {
         return this.onAppendEntries(from, payload, now);
       case 'AppendEntriesReply':
         return this.onAppendEntriesReply(from, payload, now);
+      case 'InstallSnapshot':
+        return this.onInstallSnapshot(from, payload, now);
+      case 'InstallSnapshotReply':
+        return this.onInstallSnapshotReply(from, payload, now);
       case 'ClientRequest':
         return this.onClientRequest(payload.command, now);
       case 'Forward':
@@ -275,8 +342,8 @@ export class RaftNode {
 
   private onAppendEntries(from: string, p: Extract<Payload, { type: 'AppendEntries' }>, now: number): Outgoing[] {
     const v = this.alive();
-    const reply = (success: boolean, matchIndex: number): Outgoing[] => [
-      { to: from, payload: { type: 'AppendEntriesReply', term: this.stable.currentTerm, success, matchIndex, prevLogIndex: p.prevLogIndex } },
+    const reply = (success: boolean, matchIndex: number, nextIndexHint?: number): Outgoing[] => [
+      { to: from, payload: { type: 'AppendEntriesReply', term: this.stable.currentTerm, success, matchIndex, prevLogIndex: p.prevLogIndex, ...(nextIndexHint === undefined ? {} : { nextIndexHint }) } },
     ];
     if (p.term < this.stable.currentTerm) return reply(false, 0);
     this.observeTerm(p.term, now);
@@ -288,17 +355,26 @@ export class RaftNode {
       out.push(...this.rerouteAll(now));
     }
     const log = this.stable.log;
-    if (p.prevLogIndex > log.length || (p.prevLogIndex > 0 && (log[p.prevLogIndex - 1] as Entry).term !== p.prevLogTerm)) {
+    if (p.prevLogIndex < this.stable.logStartIndex - 1) {
+      return [...out, ...reply(false, 0, this.stable.logStartIndex)];
+    }
+    if (p.prevLogIndex > this.lastLogIndex() || this.termAt(p.prevLogIndex) !== p.prevLogTerm) {
       return [...out, ...reply(false, 0)];
     }
+    // A stale/conflicting message must never truncate an already committed prefix.
+    if (p.entries.some((e, i) => {
+      const idx = p.prevLogIndex + 1 + i;
+      return idx <= v.commitIndex && this.entryAt(idx)?.term !== e.term;
+    })) return [...out, ...reply(false, 0)];
     // Rule 2: truncate only on a term conflict; entries that already match are kept.
     p.entries.forEach((e, i) => {
       const idx = p.prevLogIndex + 1 + i;
-      const existing = log[idx - 1];
-      if (existing === undefined) log.push(e);
+      const offset = idx - this.stable.logStartIndex;
+      const existing = log[offset];
+      if (existing === undefined) log.push(copyEntry(e));
       else if (existing.term !== e.term) {
-        log.length = idx - 1;
-        log.push(e);
+        log.length = offset;
+        log.push(copyEntry(e));
       }
     });
     // Rule 3: acknowledge prevLogIndex + entries.length, not our own log length.
@@ -327,15 +403,56 @@ export class RaftNode {
       return this.advanceCommit();
     }
     // Rule 4: nextIndex never below 1 (nor below what is known to match).
-    v.nextIndex.set(from, Math.max(1, match + 1, Math.min(next, p.prevLogIndex)));
+    const proposed = p.nextIndexHint === undefined ? Math.min(next, p.prevLogIndex) : Math.min(p.nextIndexHint, this.lastLogIndex() + 1);
+    v.nextIndex.set(from, Math.max(1, match + 1, proposed));
     return [];
+  }
+
+  private onInstallSnapshot(from: string, p: Extract<Payload, { type: 'InstallSnapshot' }>, now: number): Outgoing[] {
+    const v = this.alive();
+    const reply = (success: boolean): Outgoing => ({ to: from, payload: {
+      type: 'InstallSnapshotReply', term: this.stable.currentTerm, lastIncludedIndex: p.snapshot.lastIncludedIndex, success,
+    } });
+    if (p.term < this.stable.currentTerm) return [reply(false)];
+    this.observeTerm(p.term, now);
+    v.role = 'follower';
+    v.electionResetAt = now;
+    const changedLeader = v.leaderId !== p.leaderId;
+    v.leaderId = p.leaderId;
+    const snapshot = p.snapshot;
+    if (snapshot.lastIncludedIndex > v.lastApplied) {
+      const matches = this.termAt(snapshot.lastIncludedIndex) === snapshot.lastIncludedTerm;
+      const suffix = matches ? this.stable.log.slice(snapshot.lastIncludedIndex + 1 - this.stable.logStartIndex).map(copyEntry) : [];
+      // Publish the entire stable image before producing an acknowledgement.
+      this.stable.snapshot = copySnapshot(snapshot);
+      this.stable.log = suffix;
+      this.stable.logStartIndex = snapshot.lastIncludedIndex + 1;
+      this.stable.logBaseTerm = snapshot.lastIncludedTerm;
+      v.commitIndex = snapshot.lastIncludedIndex;
+      v.lastApplied = snapshot.lastIncludedIndex;
+      v.kv = new Map(Object.entries(snapshot.kv));
+      v.applied = new Map(Object.entries(snapshot.applied).map(([key, value]) => [key, { ...value }]));
+      v.effects = [...snapshot.effects];
+    }
+    // Installation itself never replies to clients; held gateway requests keep their normal route.
+    return [...(changedLeader ? this.rerouteAll(now) : []), reply(true)];
+  }
+
+  private onInstallSnapshotReply(from: string, p: Extract<Payload, { type: 'InstallSnapshotReply' }>, now: number): Outgoing[] {
+    const v = this.alive();
+    this.observeTerm(p.term, now);
+    if (v.role !== 'leader' || p.term !== this.stable.currentTerm || !p.success) return [];
+    const match = Math.max(v.matchIndex.get(from) ?? 0, p.lastIncludedIndex);
+    v.matchIndex.set(from, match);
+    v.nextIndex.set(from, Math.max(v.nextIndex.get(from) ?? 1, match + 1));
+    return this.advanceCommit();
   }
 
   /** Rule 7: only entries of the current term are committed by counting replicas (Raft §5.4.2). */
   private advanceCommit(): Outgoing[] {
     const v = this.alive();
     for (let n = this.lastLogIndex(); n > v.commitIndex; n--) {
-      if ((this.stable.log[n - 1] as Entry).term !== this.stable.currentTerm) break;
+      if (this.termAt(n) !== this.stable.currentTerm) break;
       let count = 1;
       for (const p of this.peers) if ((v.matchIndex.get(p) ?? 0) >= n) count++;
       if (count >= this.majority) {
@@ -353,7 +470,7 @@ export class RaftNode {
     const out: Outgoing[] = [];
     while (v.lastApplied < v.commitIndex) {
       v.lastApplied += 1;
-      const c = (this.stable.log[v.lastApplied - 1] as Entry).command;
+      const c = (this.entryAt(v.lastApplied) as Entry).command;
       const key = requestKey(c.clientId, c.requestId);
       const intent = intentOf(c);
       const prior = v.applied.get(key);
@@ -417,7 +534,7 @@ export class RaftNode {
     const v = this.alive();
     const term = this.stable.currentTerm;
     const key = gatewayKey(command);
-    const dup = this.stable.log.some((e, i) => i + 1 > v.commitIndex && e.term === term && gatewayKey(e.command) === key);
+    const dup = this.stable.log.some((e, i) => this.stable.logStartIndex + i > v.commitIndex && e.term === term && gatewayKey(e.command) === key);
     if (dup) return;
     // Rule 1: the leader writes its own log before replicating (heartbeat carries it).
     this.stable.log.push({ term, command });
