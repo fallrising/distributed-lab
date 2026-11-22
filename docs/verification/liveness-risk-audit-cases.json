@@ -1,0 +1,937 @@
+{
+  "schema_version": 1,
+  "base_sha": "e4e538654f5dd821683f02538cc10c10996764e9",
+  "spec_sha": "0f0f4dcf471c1f7ccc381ceeb5eda99c609e98e5",
+  "cases": [
+    {
+      "labels": [
+        "H2-best"
+      ],
+      "candidate": {
+        "id": "initial-2/238",
+        "prefixBound": 2,
+        "prefix": [
+          {
+            "tick": 1,
+            "type": "partition",
+            "groups": [
+              [
+                "A"
+              ],
+              [
+                "B",
+                "C",
+                "D"
+              ],
+              [
+                "E"
+              ]
+            ]
+          },
+          {
+            "tick": 3,
+            "type": "heal"
+          },
+          {
+            "tick": 7,
+            "type": "partition",
+            "groups": [
+              [
+                "A",
+                "D",
+                "E"
+              ],
+              [
+                "B"
+              ],
+              [
+                "C"
+              ]
+            ]
+          },
+          {
+            "tick": 8,
+            "type": "partition",
+            "groups": [
+              [
+                "A"
+              ],
+              [
+                "B",
+                "C",
+                "E"
+              ],
+              [
+                "D"
+              ]
+            ]
+          },
+          {
+            "tick": 13,
+            "type": "heal"
+          },
+          {
+            "tick": 17,
+            "type": "partition",
+            "groups": [
+              [
+                "A",
+                "B",
+                "D"
+              ],
+              [
+                "C",
+                "E"
+              ]
+            ]
+          },
+          {
+            "tick": 18,
+            "type": "partition",
+            "groups": [
+              [
+                "A",
+                "C",
+                "D"
+              ],
+              [
+                "B",
+                "E"
+              ]
+            ]
+          }
+        ],
+        "strategySeed": 1938644,
+        "readVia": "B"
+      },
+      "observed": {
+        "signature": "{\"bound\":2,\"prefix\":[{\"groups\":[[\"A\"],[\"B\",\"C\",\"D\"],[\"E\"]],\"tick\":1,\"type\":\"partition\"},{\"tick\":3,\"type\":\"heal\"},{\"groups\":[[\"A\",\"D\",\"E\"],[\"B\"],[\"C\"]],\"tick\":7,\"type\":\"partition\"},{\"groups\":[[\"A\"],[\"B\",\"C\",\"E\"],[\"D\"]],\"tick\":8,\"type\":\"partition\"},{\"tick\":13,\"type\":\"heal\"},{\"groups\":[[\"A\",\"B\",\"D\"],[\"C\",\"E\"]],\"tick\":17,\"type\":\"partition\"},{\"groups\":[[\"A\",\"C\",\"D\"],[\"B\",\"E\"]],\"tick\":18,\"type\":\"partition\"}],\"readVia\":\"B\",\"strategySeed\":1938644}",
+        "states": {
+          "19": {
+            "tick": 19,
+            "freshness": {
+              "A": {
+                "term": 1,
+                "index": 1
+              },
+              "B": {
+                "term": 1,
+                "index": 1
+              },
+              "C": {
+                "term": 0,
+                "index": 0
+              },
+              "D": {
+                "term": 1,
+                "index": 1
+              },
+              "E": {
+                "term": 1,
+                "index": 1
+              }
+            },
+            "bContainsPendingWrite": true,
+            "pendingWriteUncompleted": true
+          },
+          "20": {
+            "tick": 20,
+            "freshness": {
+              "A": {
+                "term": 1,
+                "index": 1
+              },
+              "B": {
+                "term": 1,
+                "index": 1
+              },
+              "C": {
+                "term": 0,
+                "index": 0
+              },
+              "D": {
+                "term": 1,
+                "index": 1
+              },
+              "E": {
+                "term": 1,
+                "index": 1
+              }
+            },
+            "bContainsPendingWrite": true,
+            "pendingWriteUncompleted": true
+          },
+          "25": {
+            "tick": 25,
+            "freshness": {
+              "A": {
+                "term": 1,
+                "index": 1
+              },
+              "B": {
+                "term": 1,
+                "index": 1
+              },
+              "C": {
+                "term": 0,
+                "index": 0
+              },
+              "D": {
+                "term": 1,
+                "index": 1
+              },
+              "E": {
+                "term": 1,
+                "index": 1
+              }
+            },
+            "bContainsPendingWrite": true,
+            "pendingWriteUncompleted": true
+          }
+        },
+        "h1Hit": false,
+        "h2Configuration": false,
+        "h2Hit": false,
+        "h2NearMatch": true,
+        "staleRefusals": [
+          {
+            "tick": 15,
+            "messageId": "msg-45",
+            "voter": "D",
+            "replyTerm": 2,
+            "beforeRole": "candidate",
+            "beforeTerm": 2,
+            "afterRole": "follower",
+            "afterTerm": 2,
+            "candidateFreshness": {
+              "term": 0,
+              "index": 0
+            },
+            "requestedFreshness": {
+              "term": 0,
+              "index": 0
+            },
+            "exact": true
+          },
+          {
+            "tick": 17,
+            "messageId": "msg-53",
+            "voter": "E",
+            "replyTerm": 2,
+            "beforeRole": "follower",
+            "beforeTerm": 2,
+            "afterRole": "follower",
+            "afterTerm": 2,
+            "candidateFreshness": {
+              "term": 0,
+              "index": 0
+            },
+            "requestedFreshness": {
+              "term": 0,
+              "index": 0
+            },
+            "exact": false
+          }
+        ],
+        "ranks": {
+          "H1": [
+            0,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "H2": [
+            0,
+            0,
+            1,
+            0,
+            2,
+            2,
+            0,
+            0
+          ]
+        },
+        "writeComplete": 34,
+        "readComplete": 69,
+        "judgement": {
+          "required": true,
+          "missing": [],
+          "violations": []
+        },
+        "safety": "合法",
+        "inputErrors": [],
+        "failures": [],
+        "inconclusive": [],
+        "recordingDigest": "888eb1ca6631247a57775a19925990a159efd8a24eb9cdfbdebef2bcf8d68f3e",
+        "observationDigest": "5d9ac7aef7d85c5781b47abf6a1fb0557e4558236d64d1a7e736a5ab8ae2d4ee",
+        "stableDigest": "f0891878f7eabfe1fcb453d57c6e2f25916c786d692e6a67df8ae4276b281bc2"
+      }
+    },
+    {
+      "labels": [
+        "H1-best"
+      ],
+      "candidate": {
+        "id": "initial-2/135",
+        "prefixBound": 2,
+        "prefix": [
+          {
+            "tick": 2,
+            "type": "partition",
+            "groups": [
+              [
+                "A",
+                "E"
+              ],
+              [
+                "B",
+                "C"
+              ],
+              [
+                "D"
+              ]
+            ]
+          },
+          {
+            "tick": 3,
+            "type": "partition",
+            "groups": [
+              [
+                "A"
+              ],
+              [
+                "B"
+              ],
+              [
+                "C"
+              ],
+              [
+                "D",
+                "E"
+              ]
+            ]
+          },
+          {
+            "tick": 6,
+            "type": "partition",
+            "groups": [
+              [
+                "A",
+                "D"
+              ],
+              [
+                "B",
+                "E"
+              ],
+              [
+                "C"
+              ]
+            ]
+          },
+          {
+            "tick": 9,
+            "type": "partition",
+            "groups": [
+              [
+                "A",
+                "B",
+                "C"
+              ],
+              [
+                "D",
+                "E"
+              ]
+            ]
+          },
+          {
+            "tick": 14,
+            "type": "partition",
+            "groups": [
+              [
+                "A",
+                "C",
+                "E"
+              ],
+              [
+                "B"
+              ],
+              [
+                "D"
+              ]
+            ]
+          },
+          {
+            "tick": 15,
+            "type": "heal"
+          }
+        ],
+        "strategySeed": 1122987,
+        "readVia": "A"
+      },
+      "observed": {
+        "signature": "{\"bound\":2,\"prefix\":[{\"groups\":[[\"A\",\"E\"],[\"B\",\"C\"],[\"D\"]],\"tick\":2,\"type\":\"partition\"},{\"groups\":[[\"A\"],[\"B\"],[\"C\"],[\"D\",\"E\"]],\"tick\":3,\"type\":\"partition\"},{\"groups\":[[\"A\",\"D\"],[\"B\",\"E\"],[\"C\"]],\"tick\":6,\"type\":\"partition\"},{\"groups\":[[\"A\",\"B\",\"C\"],[\"D\",\"E\"]],\"tick\":9,\"type\":\"partition\"},{\"groups\":[[\"A\",\"C\",\"E\"],[\"B\"],[\"D\"]],\"tick\":14,\"type\":\"partition\"},{\"tick\":15,\"type\":\"heal\"}],\"readVia\":\"A\",\"strategySeed\":1122987}",
+        "states": {
+          "19": {
+            "tick": 19,
+            "freshness": {
+              "A": {
+                "term": 4,
+                "index": 1
+              },
+              "B": {
+                "term": 4,
+                "index": 1
+              },
+              "C": {
+                "term": 0,
+                "index": 0
+              },
+              "D": {
+                "term": 4,
+                "index": 1
+              },
+              "E": {
+                "term": 0,
+                "index": 0
+              }
+            },
+            "bContainsPendingWrite": true,
+            "pendingWriteUncompleted": true
+          },
+          "20": {
+            "tick": 20,
+            "freshness": {
+              "A": {
+                "term": 4,
+                "index": 1
+              },
+              "B": {
+                "term": 4,
+                "index": 1
+              },
+              "C": {
+                "term": 4,
+                "index": 1
+              },
+              "D": {
+                "term": 4,
+                "index": 1
+              },
+              "E": {
+                "term": 0,
+                "index": 0
+              }
+            },
+            "bContainsPendingWrite": true,
+            "pendingWriteUncompleted": true
+          },
+          "25": {
+            "tick": 25,
+            "freshness": {
+              "A": {
+                "term": 4,
+                "index": 1
+              },
+              "B": {
+                "term": 4,
+                "index": 1
+              },
+              "C": {
+                "term": 4,
+                "index": 1
+              },
+              "D": {
+                "term": 4,
+                "index": 1
+              },
+              "E": {
+                "term": 0,
+                "index": 0
+              }
+            },
+            "bContainsPendingWrite": true,
+            "pendingWriteUncompleted": false
+          }
+        },
+        "h1Hit": false,
+        "h2Configuration": false,
+        "h2Hit": false,
+        "h2NearMatch": false,
+        "staleRefusals": [],
+        "ranks": {
+          "H1": [
+            0,
+            1,
+            1,
+            1,
+            4,
+            1
+          ],
+          "H2": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0
+          ]
+        },
+        "writeComplete": 23,
+        "readComplete": 68,
+        "judgement": {
+          "required": true,
+          "missing": [],
+          "violations": []
+        },
+        "safety": "合法",
+        "inputErrors": [],
+        "failures": [],
+        "inconclusive": [],
+        "recordingDigest": "f13866f34081af8756db0fbbf84446ae154fae3016607b4b3a6358b9b885c225",
+        "observationDigest": "5699d344feeb88a29a0c2271f16691b3ffed5ab4f43953c2173a213f633fd67c",
+        "stableDigest": "bc687ff9766c30ad4d9aac211d18465c8a711e9cfc4ce95c147dffb4b7aba310"
+      }
+    },
+    {
+      "labels": [
+        "worst-write"
+      ],
+      "candidate": {
+        "id": "initial-6/431",
+        "prefixBound": 6,
+        "prefix": [
+          {
+            "tick": 1,
+            "type": "partition",
+            "groups": [
+              [
+                "A",
+                "C",
+                "D",
+                "E"
+              ],
+              [
+                "B"
+              ]
+            ]
+          },
+          {
+            "tick": 7,
+            "type": "partition",
+            "groups": [
+              [
+                "A",
+                "B",
+                "D",
+                "E"
+              ],
+              [
+                "C"
+              ]
+            ]
+          },
+          {
+            "tick": 9,
+            "type": "partition",
+            "groups": [
+              [
+                "A"
+              ],
+              [
+                "B",
+                "C"
+              ],
+              [
+                "D",
+                "E"
+              ]
+            ]
+          },
+          {
+            "tick": 16,
+            "type": "partition",
+            "groups": [
+              [
+                "A",
+                "C",
+                "D"
+              ],
+              [
+                "B"
+              ],
+              [
+                "E"
+              ]
+            ]
+          },
+          {
+            "tick": 19,
+            "type": "partition",
+            "groups": [
+              [
+                "A",
+                "D"
+              ],
+              [
+                "B",
+                "E"
+              ],
+              [
+                "C"
+              ]
+            ]
+          }
+        ],
+        "strategySeed": 7521943,
+        "readVia": "B"
+      },
+      "observed": {
+        "signature": "{\"bound\":6,\"prefix\":[{\"groups\":[[\"A\",\"C\",\"D\",\"E\"],[\"B\"]],\"tick\":1,\"type\":\"partition\"},{\"groups\":[[\"A\",\"B\",\"D\",\"E\"],[\"C\"]],\"tick\":7,\"type\":\"partition\"},{\"groups\":[[\"A\"],[\"B\",\"C\"],[\"D\",\"E\"]],\"tick\":9,\"type\":\"partition\"},{\"groups\":[[\"A\",\"C\",\"D\"],[\"B\"],[\"E\"]],\"tick\":16,\"type\":\"partition\"},{\"groups\":[[\"A\",\"D\"],[\"B\",\"E\"],[\"C\"]],\"tick\":19,\"type\":\"partition\"}],\"readVia\":\"B\",\"strategySeed\":7521943}",
+        "states": {
+          "19": {
+            "tick": 19,
+            "freshness": {
+              "A": {
+                "term": 1,
+                "index": 1
+              },
+              "B": {
+                "term": 0,
+                "index": 0
+              },
+              "C": {
+                "term": 0,
+                "index": 0
+              },
+              "D": {
+                "term": 1,
+                "index": 1
+              },
+              "E": {
+                "term": 0,
+                "index": 0
+              }
+            },
+            "bContainsPendingWrite": false,
+            "pendingWriteUncompleted": true
+          },
+          "20": {
+            "tick": 20,
+            "freshness": {
+              "A": {
+                "term": 1,
+                "index": 1
+              },
+              "B": {
+                "term": 0,
+                "index": 0
+              },
+              "C": {
+                "term": 0,
+                "index": 0
+              },
+              "D": {
+                "term": 1,
+                "index": 1
+              },
+              "E": {
+                "term": 0,
+                "index": 0
+              }
+            },
+            "bContainsPendingWrite": false,
+            "pendingWriteUncompleted": true
+          },
+          "25": {
+            "tick": 25,
+            "freshness": {
+              "A": {
+                "term": 1,
+                "index": 1
+              },
+              "B": {
+                "term": 0,
+                "index": 0
+              },
+              "C": {
+                "term": 0,
+                "index": 0
+              },
+              "D": {
+                "term": 1,
+                "index": 1
+              },
+              "E": {
+                "term": 0,
+                "index": 0
+              }
+            },
+            "bContainsPendingWrite": false,
+            "pendingWriteUncompleted": true
+          }
+        },
+        "h1Hit": false,
+        "h2Configuration": false,
+        "h2Hit": false,
+        "h2NearMatch": false,
+        "staleRefusals": [],
+        "ranks": {
+          "H1": [
+            0,
+            0,
+            0,
+            1,
+            0,
+            0
+          ],
+          "H2": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0
+          ]
+        },
+        "writeComplete": 43,
+        "readComplete": 69,
+        "judgement": {
+          "required": true,
+          "missing": [],
+          "violations": []
+        },
+        "safety": "合法",
+        "inputErrors": [],
+        "failures": [],
+        "inconclusive": [],
+        "recordingDigest": "5b9dc3ca1f6c61000537162f5fde8e1449c35dd4e20d471c4409e9845d9d8027",
+        "observationDigest": "259f0548f6a74df3860c8fa55e1a8be4dfa06918711b38ff0f8dae056afbe339",
+        "stableDigest": "f110e2daf4594e838f3eb767d8474fdb9e9c9fdf367275609b66a4da80ef527b"
+      }
+    },
+    {
+      "labels": [
+        "worst-read"
+      ],
+      "candidate": {
+        "id": "initial-2/42",
+        "prefixBound": 2,
+        "prefix": [
+          {
+            "tick": 1,
+            "type": "partition",
+            "groups": [
+              [
+                "A"
+              ],
+              [
+                "B",
+                "D"
+              ],
+              [
+                "C"
+              ],
+              [
+                "E"
+              ]
+            ]
+          },
+          {
+            "tick": 2,
+            "type": "partition",
+            "groups": [
+              [
+                "A",
+                "D",
+                "E"
+              ],
+              [
+                "B",
+                "C"
+              ]
+            ]
+          },
+          {
+            "tick": 9,
+            "type": "heal"
+          },
+          {
+            "tick": 12,
+            "type": "heal"
+          },
+          {
+            "tick": 15,
+            "type": "partition",
+            "groups": [
+              [
+                "A"
+              ],
+              [
+                "B"
+              ],
+              [
+                "C"
+              ],
+              [
+                "D"
+              ],
+              [
+                "E"
+              ]
+            ]
+          },
+          {
+            "tick": 18,
+            "type": "partition",
+            "groups": [
+              [
+                "A",
+                "B"
+              ],
+              [
+                "C",
+                "E"
+              ],
+              [
+                "D"
+              ]
+            ]
+          }
+        ],
+        "strategySeed": 386520,
+        "readVia": "A"
+      },
+      "observed": {
+        "signature": "{\"bound\":2,\"prefix\":[{\"groups\":[[\"A\"],[\"B\",\"D\"],[\"C\"],[\"E\"]],\"tick\":1,\"type\":\"partition\"},{\"groups\":[[\"A\",\"D\",\"E\"],[\"B\",\"C\"]],\"tick\":2,\"type\":\"partition\"},{\"tick\":9,\"type\":\"heal\"},{\"tick\":12,\"type\":\"heal\"},{\"groups\":[[\"A\"],[\"B\"],[\"C\"],[\"D\"],[\"E\"]],\"tick\":15,\"type\":\"partition\"},{\"groups\":[[\"A\",\"B\"],[\"C\",\"E\"],[\"D\"]],\"tick\":18,\"type\":\"partition\"}],\"readVia\":\"A\",\"strategySeed\":386520}",
+        "states": {
+          "19": {
+            "tick": 19,
+            "freshness": {
+              "A": {
+                "term": 1,
+                "index": 1
+              },
+              "B": {
+                "term": 1,
+                "index": 1
+              },
+              "C": {
+                "term": 1,
+                "index": 1
+              },
+              "D": {
+                "term": 1,
+                "index": 1
+              },
+              "E": {
+                "term": 1,
+                "index": 1
+              }
+            },
+            "bContainsPendingWrite": true,
+            "pendingWriteUncompleted": false
+          },
+          "20": {
+            "tick": 20,
+            "freshness": {
+              "A": {
+                "term": 1,
+                "index": 1
+              },
+              "B": {
+                "term": 1,
+                "index": 1
+              },
+              "C": {
+                "term": 1,
+                "index": 1
+              },
+              "D": {
+                "term": 1,
+                "index": 1
+              },
+              "E": {
+                "term": 1,
+                "index": 1
+              }
+            },
+            "bContainsPendingWrite": true,
+            "pendingWriteUncompleted": false
+          },
+          "25": {
+            "tick": 25,
+            "freshness": {
+              "A": {
+                "term": 1,
+                "index": 1
+              },
+              "B": {
+                "term": 1,
+                "index": 1
+              },
+              "C": {
+                "term": 1,
+                "index": 1
+              },
+              "D": {
+                "term": 1,
+                "index": 1
+              },
+              "E": {
+                "term": 1,
+                "index": 1
+              }
+            },
+            "bContainsPendingWrite": true,
+            "pendingWriteUncompleted": false
+          }
+        },
+        "h1Hit": false,
+        "h2Configuration": false,
+        "h2Hit": false,
+        "h2NearMatch": false,
+        "staleRefusals": [],
+        "ranks": {
+          "H1": [
+            0,
+            0,
+            1,
+            0,
+            1,
+            1
+          ],
+          "H2": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            1
+          ]
+        },
+        "writeComplete": 16,
+        "readComplete": 71,
+        "judgement": {
+          "required": true,
+          "missing": [],
+          "violations": []
+        },
+        "safety": "合法",
+        "inputErrors": [],
+        "failures": [],
+        "inconclusive": [],
+        "recordingDigest": "2277d06363e3386675965523f81a2c0c3fd450c5d0ae0a8bef0131124f4165ce",
+        "observationDigest": "0cc607585b8823532bc66f16ec2ec2d7eef12d0a9a034e148201e5fef37371ee",
+        "stableDigest": "d878a684645fd463deaa6775183bdc4726099a1e187f799e738c853883a458f1"
+      }
+    }
+  ]
+}
