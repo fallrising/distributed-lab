@@ -179,6 +179,40 @@ export interface Scenarios {
     readonly global_single_leader_at_every_instant_required: boolean;
     readonly explanation_topics: string[];
   };
+  readonly snapshot_case: {
+    readonly stable_delivery_bound_ticks: number;
+    readonly completion_bound_per_stage_ticks: number;
+    readonly fair_processing: boolean;
+    readonly sequence_rule: string;
+    readonly stages: readonly SnapshotStageSpec[];
+    readonly lagging_member: string;
+    readonly expected_lagging_state_after_recovery: string;
+    readonly retry_after_recovery: {
+      readonly original_request: RetryStep;
+      readonly expected_retry_result: string;
+      readonly new_read: RetryStep & { readonly expected: string };
+    };
+  };
+  readonly snapshot_equivalence: {
+    readonly basis: string;
+    readonly variants: readonly { readonly id: string; readonly execute_stages?: string; readonly omit_stages?: readonly string[] }[];
+    readonly compare: readonly string[];
+    readonly may_differ: readonly string[];
+  };
+  readonly regression_cases: readonly string[];
+}
+
+export interface SnapshotStageSpec extends StepSpec {
+  readonly id: string;
+  readonly isolated_member?: string;
+  readonly others?: readonly string[];
+  readonly members?: readonly string[];
+  readonly covers_confirmed_requests?: readonly string[];
+  readonly expected_values?: Readonly<Record<string, string>>;
+  readonly covered_requests?: readonly string[];
+  readonly target?: string;
+  readonly stable_storage?: string;
+  readonly all_members_stable?: boolean;
 }
 
 export interface RetryStep {
