@@ -1,0 +1,378 @@
+{
+  "schema_version": 1,
+  "scope": "T-0458 finite engineering audit, not a formal model comparison",
+  "preflight": {
+    "base_sha": "e4e538654f5dd821683f02538cc10c10996764e9",
+    "tool_node": "22.23.1",
+    "formal_plan": {
+      "seed": 45801,
+      "initial_per_bound": 512,
+      "mutation_attempts_per_cell": 767,
+      "beam_width": 4,
+      "complete_simulation_cap": 4096,
+      "runner_replays": 2,
+      "independent_replay_reserve": 2
+    },
+    "files": {
+      "scripts/liveness-risk-search.ts": "7144e68ecf46f00b70659ae3ef1c25038669fcca0fddc35ffbe64d6b22521180",
+      "scripts/liveness-risk-audit.ts": "d6e52039baa61ab6199cd49ba50dc122c7aad93ca8c16c4763f9cacf867a85ee",
+      "test/unit/liveness-risk-audit.test.ts": "87178f8dd39496e6641d57f941a938aa9bea6405b70930e2444a3989272da00d",
+      "data/scenarios.yaml": "ed8cc3bb793db273cd9438a602f48e32e9fd1e8641ba8784cc7e8eae79a2cac2",
+      "data/SOURCE.json": "30ab0a0103a3469148fd05627384fa67d44f44770acefc26a9de85dddc34b045"
+    }
+  },
+  "observed_summary": {
+    "plan": {
+      "auditSeed": 45801,
+      "initialPerBound": 512,
+      "mutationsPerCell": 767,
+      "maxReplays": 4,
+      "beamWidth": 4,
+      "maxSimulations": 4096
+    },
+    "candidateEvaluations": 3828,
+    "replayEvaluations": 2,
+    "completeSimulations": 3830,
+    "remainingReplayAllowance": 2,
+    "duplicateSkips": 264,
+    "generated": {
+      "initial-2": 512,
+      "initial-6": 512,
+      "H1-2": 767,
+      "H1-6": 767,
+      "H2-2": 767,
+      "H2-6": 767
+    },
+    "evaluated": {
+      "initial-2": 512,
+      "initial-6": 512,
+      "H1-2": 694,
+      "H1-6": 709,
+      "H2-2": 698,
+      "H2-6": 703
+    },
+    "readViaCoverage": {
+      "A": 2371,
+      "B": 1100,
+      "C": 357
+    },
+    "partitionCoverage": {
+      "2": 52,
+      "6": 52
+    },
+    "hits": {
+      "H1": 0,
+      "H1UncompletedWrite": 0,
+      "H2Configuration": 0,
+      "H2NonStrictConfiguration": 0,
+      "H2ExactBackoff": 266,
+      "H2Combined": 0,
+      "H2NearMatch": 266
+    },
+    "worstWrite": 43,
+    "worstRead": 71,
+    "stoppedBecause": "exhausted finite plan",
+    "firstFailure": null,
+    "replays": [
+      {
+        "signature": "{\"bound\":6,\"prefix\":[{\"groups\":[[\"A\",\"C\",\"D\",\"E\"],[\"B\"]],\"tick\":1,\"type\":\"partition\"},{\"groups\":[[\"A\",\"B\",\"D\",\"E\"],[\"C\"]],\"tick\":7,\"type\":\"partition\"},{\"groups\":[[\"A\"],[\"B\",\"C\"],[\"D\",\"E\"]],\"tick\":9,\"type\":\"partition\"},{\"groups\":[[\"A\",\"C\",\"D\"],[\"B\"],[\"E\"]],\"tick\":16,\"type\":\"partition\"},{\"groups\":[[\"A\",\"D\"],[\"B\",\"E\"],[\"C\"]],\"tick\":19,\"type\":\"partition\"}],\"readVia\":\"B\",\"strategySeed\":7521943}",
+        "success": true,
+        "remainingChoices": 0,
+        "recordingDigest": "5b9dc3ca1f6c61000537162f5fde8e1449c35dd4e20d471c4409e9845d9d8027"
+      },
+      {
+        "signature": "{\"bound\":2,\"prefix\":[{\"groups\":[[\"A\"],[\"B\",\"D\"],[\"C\"],[\"E\"]],\"tick\":1,\"type\":\"partition\"},{\"groups\":[[\"A\",\"D\",\"E\"],[\"B\",\"C\"]],\"tick\":2,\"type\":\"partition\"},{\"tick\":9,\"type\":\"heal\"},{\"tick\":12,\"type\":\"heal\"},{\"groups\":[[\"A\"],[\"B\"],[\"C\"],[\"D\"],[\"E\"]],\"tick\":15,\"type\":\"partition\"},{\"groups\":[[\"A\",\"B\"],[\"C\",\"E\"],[\"D\"]],\"tick\":18,\"type\":\"partition\"}],\"readVia\":\"A\",\"strategySeed\":386520}",
+        "success": true,
+        "remainingChoices": 0,
+        "recordingDigest": "2277d06363e3386675965523f81a2c0c3fd450c5d0ae0a8bef0131124f4165ce"
+      }
+    ],
+    "partitionUniverse": 52,
+    "rankDefinitions": {
+      "H1": [
+        "fullHit",
+        "B newer than A/C count",
+        "B contains pending write",
+        "write still uncompleted",
+        "B last-log term",
+        "B last-log index"
+      ],
+      "H2": [
+        "combinedHit",
+        "tick19 hierarchy",
+        "exact backoff count",
+        "C newer than A/B count",
+        "D/E newer than C count",
+        "stale refusal count",
+        "C last-log term",
+        "C last-log index"
+      ]
+    },
+    "limitations": [
+      "Finite external-input search only; absence of hits is not an unreachability proof.",
+      "H1 requires B strictly newer than A/C and containing the original write; client completion is a separate diagnostic.",
+      "H2 full configuration uses strict C>A/B and some D/E>C at tick19; C ties are reported only as non-strict near-matches.",
+      "H2 hierarchy is observed at tick19; a separately identified exact backoff must be in the same candidate, not necessarily the same instant.",
+      "No internal-state injection, changed deadlines, skipped operations, or modified data.",
+      "At most two tool replays; the remaining replay allowance is reserved for independent review."
+    ]
+  },
+  "independent_replays": {
+    "reviewer": "/root/m3_design",
+    "replayEvaluations": 2,
+    "results": [
+      {
+        "key": "91617b6a0ebe416d",
+        "labels": [
+          "H1-best"
+        ],
+        "candidate": {
+          "id": "initial-2/135",
+          "prefixBound": 2,
+          "prefix": [
+            {
+              "tick": 2,
+              "type": "partition",
+              "groups": [
+                [
+                  "A",
+                  "E"
+                ],
+                [
+                  "B",
+                  "C"
+                ],
+                [
+                  "D"
+                ]
+              ]
+            },
+            {
+              "tick": 3,
+              "type": "partition",
+              "groups": [
+                [
+                  "A"
+                ],
+                [
+                  "B"
+                ],
+                [
+                  "C"
+                ],
+                [
+                  "D",
+                  "E"
+                ]
+              ]
+            },
+            {
+              "tick": 6,
+              "type": "partition",
+              "groups": [
+                [
+                  "A",
+                  "D"
+                ],
+                [
+                  "B",
+                  "E"
+                ],
+                [
+                  "C"
+                ]
+              ]
+            },
+            {
+              "tick": 9,
+              "type": "partition",
+              "groups": [
+                [
+                  "A",
+                  "B",
+                  "C"
+                ],
+                [
+                  "D",
+                  "E"
+                ]
+              ]
+            },
+            {
+              "tick": 14,
+              "type": "partition",
+              "groups": [
+                [
+                  "A",
+                  "C",
+                  "E"
+                ],
+                [
+                  "B"
+                ],
+                [
+                  "D"
+                ]
+              ]
+            },
+            {
+              "tick": 15,
+              "type": "heal"
+            }
+          ],
+          "strategySeed": 1122987,
+          "readVia": "A"
+        },
+        "success": true,
+        "expected": {
+          "recordingDigest": "f13866f34081af8756db0fbbf84446ae154fae3016607b4b3a6358b9b885c225",
+          "observationDigest": "5699d344feeb88a29a0c2271f16691b3ffed5ab4f43953c2173a213f633fd67c",
+          "stableDigest": "bc687ff9766c30ad4d9aac211d18465c8a711e9cfc4ce95c147dffb4b7aba310"
+        },
+        "actual": {
+          "remainingChoices": 0,
+          "recordingDigest": "f13866f34081af8756db0fbbf84446ae154fae3016607b4b3a6358b9b885c225",
+          "observationDigest": "5699d344feeb88a29a0c2271f16691b3ffed5ab4f43953c2173a213f633fd67c",
+          "stableDigest": "bc687ff9766c30ad4d9aac211d18465c8a711e9cfc4ce95c147dffb4b7aba310"
+        }
+      },
+      {
+        "key": "395c5f7c2badf5fc",
+        "labels": [
+          "H2-best"
+        ],
+        "candidate": {
+          "id": "initial-2/238",
+          "prefixBound": 2,
+          "prefix": [
+            {
+              "tick": 1,
+              "type": "partition",
+              "groups": [
+                [
+                  "A"
+                ],
+                [
+                  "B",
+                  "C",
+                  "D"
+                ],
+                [
+                  "E"
+                ]
+              ]
+            },
+            {
+              "tick": 3,
+              "type": "heal"
+            },
+            {
+              "tick": 7,
+              "type": "partition",
+              "groups": [
+                [
+                  "A",
+                  "D",
+                  "E"
+                ],
+                [
+                  "B"
+                ],
+                [
+                  "C"
+                ]
+              ]
+            },
+            {
+              "tick": 8,
+              "type": "partition",
+              "groups": [
+                [
+                  "A"
+                ],
+                [
+                  "B",
+                  "C",
+                  "E"
+                ],
+                [
+                  "D"
+                ]
+              ]
+            },
+            {
+              "tick": 13,
+              "type": "heal"
+            },
+            {
+              "tick": 17,
+              "type": "partition",
+              "groups": [
+                [
+                  "A",
+                  "B",
+                  "D"
+                ],
+                [
+                  "C",
+                  "E"
+                ]
+              ]
+            },
+            {
+              "tick": 18,
+              "type": "partition",
+              "groups": [
+                [
+                  "A",
+                  "C",
+                  "D"
+                ],
+                [
+                  "B",
+                  "E"
+                ]
+              ]
+            }
+          ],
+          "strategySeed": 1938644,
+          "readVia": "B"
+        },
+        "success": true,
+        "expected": {
+          "recordingDigest": "888eb1ca6631247a57775a19925990a159efd8a24eb9cdfbdebef2bcf8d68f3e",
+          "observationDigest": "5d9ac7aef7d85c5781b47abf6a1fb0557e4558236d64d1a7e736a5ab8ae2d4ee",
+          "stableDigest": "f0891878f7eabfe1fcb453d57c6e2f25916c786d692e6a67df8ae4276b281bc2"
+        },
+        "actual": {
+          "remainingChoices": 0,
+          "recordingDigest": "888eb1ca6631247a57775a19925990a159efd8a24eb9cdfbdebef2bcf8d68f3e",
+          "observationDigest": "5d9ac7aef7d85c5781b47abf6a1fb0557e4558236d64d1a7e736a5ab8ae2d4ee",
+          "stableDigest": "f0891878f7eabfe1fcb453d57c6e2f25916c786d692e6a67df8ae4276b281bc2"
+        }
+      }
+    ]
+  },
+  "formal_total_complete_simulations": 3832,
+  "formal_remaining_replay_allowance": 0,
+  "configuration_observations": {
+    "19": {
+      "H1": 0,
+      "H1UncompletedWrite": 0,
+      "H2Strict": 0,
+      "H2NonStrict": 0
+    },
+    "20": {
+      "H1": 0,
+      "H1UncompletedWrite": 0,
+      "H2Strict": 0,
+      "H2NonStrict": 0
+    },
+    "25": {
+      "H1": 0,
+      "H1UncompletedWrite": 0,
+      "H2Strict": 0,
+      "H2NonStrict": 0
+    }
+  }
+}
